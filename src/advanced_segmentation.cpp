@@ -6,7 +6,7 @@
 #include <queue>
 #include <cmath>
 
-namespace UVUnwrapping {
+namespace UVSegmentation {
 
 std::vector<UVIsland> segmentByTextureFlow(
     const Eigen::MatrixXd& V,
@@ -254,34 +254,39 @@ std::vector<UVIsland> segmentBySymmetry(
     double tolerance
 ) {
     // 平面方程: ax + by + cz + d = 0
-    Eigen::Vector3d normal(symmetry_plane(0), symmetry_plane(1), symmetry_plane(2));
-    double d = symmetry_plane(3);
+    const double nx = symmetry_plane(0), ny = symmetry_plane(1), nz = symmetry_plane(2);
+    const double d = symmetry_plane(3);
     
-    // 将顶点分为两侧
+    // 优化：直接计算距离，避免临时对象
     std::vector<int> side(V.rows());  // -1: 负侧, 0: 在平面上, 1: 正侧
     for (int i = 0; i < V.rows(); ++i) {
-        double dist = V.row(i).dot(normal) + d;
-        if (std::abs(dist) < tolerance) {
-            side[i] = 0;
-        } else if (dist > 0) {
-            side[i] = 1;
-        } else {
-            side[i] = -1;
-        }
+        double dist = V(i, 0) * nx + V(i, 1) * ny + V(i, 2) * nz + d;
+        side[i] = (std::abs(dist) < tolerance) ? 0 : ((dist > 0) ? 1 : -1);
     }
     
-    // 找跨越对称平面的边
-    std::set<Edge> symmetry_edges;
+    // 优化：使用vector+reserve代替set，减少内存分配
+    std::vector<Edge> symmetry_edges_vec;
+    symmetry_edges_vec.reserve(F.rows());
+    
     for (int i = 0; i < F.rows(); ++i) {
-        for (int j = 0; j < 3; ++j) {
-            int v0 = F(i, j);
-            int v1 = F(i, (j + 1) % 3);
-            
-            // 如果边跨越平面或在平面上
-            if (side[v0] != side[v1] || side[v0] == 0 || side[v1] == 0) {
-                symmetry_edges.insert(Edge(v0, v1));
-            }
-        }
+        int v0 = F(i, 0), v1 = F(i, 1), v2 = F(i, 2);
+        int s0 = side[v0], s1 = side[v1], s2 = side[v2];
+        
+        // 如果边跨越平面
+        if (s0 != s1 || s0 == 0) symmetry_edges_vec.push_back(Edge(v0, v1));
+        if (s1 != s2 || s1 == 0) symmetry_edges_vec.push_back(Edge(v1, v2));
+        if (s2 != s0 || s2 == 0) symmetry_edges_vec.push_back(Edge(v2, v0));
+    }
+    
+    // 去重
+    std::set<Edge> symmetry_edges(symmetry_edges_vec.begin(), symmetry_edges_vec.end());
+    
+    // 快速返回简单情况
+    if (symmetry_edges.empty()) {
+        UVIsland island;
+        island.faces.resize(F.rows());
+        for (int i = 0; i < F.rows(); ++i) island.faces[i] = i;
+        return {island};
     }
     
     // 从对称边构建边环
@@ -331,4 +336,4 @@ std::vector<UVIsland> segmentBySymmetry(
     return segmentByEdgeLoops(V, F, edge_loops);
 }
 
-} // namespace UVUnwrapping
+} // namespace UVSegmentation

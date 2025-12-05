@@ -1,29 +1,23 @@
 # Example: Edge Loop Segmentation
 add_executable(example_edge_loop example_edge_loop.cpp)
-target_link_libraries(example_edge_loop PRIVATE uv_unwrapping)
+target_link_libraries(example_edge_loop PRIVATE mesh_segmentation)
 
 # Example: Curvature-based Segmentation
 add_executable(example_curvature example_curvature.cpp)
-target_link_libraries(example_curvature PRIVATE uv_unwrapping)
+target_link_libraries(example_curvature PRIVATE mesh_segmentation)
 
-# Example: LSCM Unwrapping
-add_executable(example_lscm example_lscm.cpp)
-target_link_libraries(example_lscm PRIVATE uv_unwrapping)
+# Visualize seam lines (SVG output)
+add_executable(visualize_seams visualize_seams.cpp)
+target_link_libraries(visualize_seams PRIVATE mesh_segmentation)
 
-# Example: ABF Unwrapping
-add_executable(example_abf example_abf.cpp)
-target_link_libraries(example_abf PRIVATE uv_unwrapping)
+# List seam lines (text output)
+add_executable(list_seams list_seams.cpp)
+target_link_libraries(list_seams PRIVATE mesh_segmentation)
 
-# Example: xatlas
-if(USE_XATLAS)
-    add_executable(example_xatlas example_xatlas.cpp)
-    target_link_libraries(example_xatlas PRIVATE uv_unwrapping)
-endif()
+# Quick segmentation test
+add_executable(quick_seam_test quick_seam_test.cpp)
+target_link_libraries(quick_seam_test PRIVATE mesh_segmentation)
 
-# Example: Complete Pipeline
-add_executable(example_pipeline example_pipeline.cpp)
-target_link_libraries(example_pipeline PRIVATE uv_unwrapping)
-
-# Example: Generate UV Images (without GUI)
-add_executable(generate_uv_images generate_uv_images.cpp)
-target_link_libraries(generate_uv_images PRIVATE uv_unwrapping)
+# Performance benchmark
+add_executable(perf_test perf_test.cpp)
+target_link_libraries(perf_test PRIVATE igl::core)

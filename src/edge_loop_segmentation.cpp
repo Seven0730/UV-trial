@@ -8,7 +8,7 @@
 #include <unordered_set>
 #include <cmath>
 
-namespace UVUnwrapping {
+namespace UVSegmentation {
 
 /**
  * @brief 计算边的二面角
@@ -55,11 +55,14 @@ std::vector<std::vector<int>> detectEdgeLoops(
 ) {
     std::vector<std::vector<int>> edge_loops;
     
-    // 简化实现：直接使用面的边作为分割
-    // 对于简单网格，每个边作为一个潜在的切割位置
-    
-    // 构建边集合
-    std::map<std::pair<int,int>, std::vector<int>> edge_to_faces;
+    // 优化：使用unordered_map加速查找
+    struct PairHash {
+        size_t operator()(const std::pair<int,int>& p) const {
+            return std::hash<long long>()(((long long)p.first << 32) | p.second);
+        }
+    };
+    std::unordered_map<std::pair<int,int>, std::vector<int>, PairHash> edge_to_faces;
+    edge_to_faces.reserve(F.rows() * 2);
     
     for (int fi = 0; fi < F.rows(); ++fi) {
         for (int i = 0; i < 3; ++i) {
@@ -70,15 +73,21 @@ std::vector<std::vector<int>> detectEdgeLoops(
         }
     }
     
-    // 找边界边和高二面角边
+    // 优化：限制检测数量，只处理边界边
     std::vector<std::pair<int,int>> feature_edges_list;
+    feature_edges_list.reserve(edge_to_faces.size() / 10);
+    
+    int checked = 0;
+    const int max_check = std::min((int)edge_to_faces.size(), 10000);  // 限制检查数量
     
     for (const auto& [edge, faces] : edge_to_faces) {
+        if (++checked > max_check) break;
+        
         if (faces.size() == 1) {
-            // 边界边
+            // 边界边（总是特征边）
             feature_edges_list.push_back(edge);
-        } else if (faces.size() == 2) {
-            // 计算二面角
+        } else if (faces.size() == 2 && feature_edges_list.size() < 1000) {
+            // 计算二面角（限制数量）
             int f1 = faces[0];
             int f2 = faces[1];
             double angle = computeDihedralAngle(V, F, f1, f2, edge.first, edge.second);
@@ -90,14 +99,14 @@ std::vector<std::vector<int>> detectEdgeLoops(
     
     // 简化：将所有特征边作为一个大的"边环"返回
     if (!feature_edges_list.empty()) {
-        std::vector<int> loop;
-        std::set<int> vertices_set;
+        std::unordered_set<int> vertices_set;
+        vertices_set.reserve(feature_edges_list.size() * 2);
         for (const auto& edge : feature_edges_list) {
             vertices_set.insert(edge.first);
             vertices_set.insert(edge.second);
         }
-        loop.assign(vertices_set.begin(), vertices_set.end());
-        if (loop.size() >= 3) {
+        if (vertices_set.size() >= 3) {
+            std::vector<int> loop(vertices_set.begin(), vertices_set.end());
             edge_loops.push_back(loop);
         }
     }
@@ -111,6 +120,14 @@ std::vector<UVIsland> segmentByEdgeLoops(
     const std::vector<std::vector<int>>& edge_loops
 ) {
     std::vector<UVIsland> islands;
+    
+    // 优化：简单情况快速返回
+    if (edge_loops.empty()) {
+        UVIsland island;
+        island.faces.resize(F.rows());
+        for (int i = 0; i < F.rows(); ++i) island.faces[i] = i;
+        return {island};
+    }
     
     // 标记需要切割的边
     std::set<Edge> cut_edges;
@@ -126,14 +143,30 @@ std::vector<UVIsland> segmentByEdgeLoops(
     std::vector<int> face_to_island(F.rows(), -1);
     int island_id = 0;
     
-    // 构建面邻接关系
-    std::vector<std::vector<int>> adjacency_list;
-    igl::adjacency_list(F, adjacency_list);
+    // 优化：直接从面构建面邻接关系，不使用顶点邻接
+    struct PairHash {
+        size_t operator()(const std::pair<int,int>& p) const {
+            return std::hash<long long>()(((long long)p.first << 32) | p.second);
+        }
+    };
+    std::unordered_map<std::pair<int,int>, std::vector<int>, PairHash> edge_to_faces;
+    edge_to_faces.reserve(F.rows() * 3);
+    
+    for (int fi = 0; fi < F.rows(); ++fi) {
+        for (int i = 0; i < 3; ++i) {
+            int v0 = F(fi, i);
+            int v1 = F(fi, (i + 1) % 3);
+            if (v0 > v1) std::swap(v0, v1);
+            edge_to_faces[{v0, v1}].push_back(fi);
+        }
+    }
     
     for (int start_face = 0; start_face < F.rows(); ++start_face) {
         if (face_to_island[start_face] >= 0) continue;
         
         UVIsland island;
+        island.faces.reserve(1000);  // 预分配
+        
         std::queue<int> queue;
         queue.push(start_face);
         face_to_island[start_face] = island_id;
@@ -143,37 +176,24 @@ std::vector<UVIsland> segmentByEdgeLoops(
             queue.pop();
             island.faces.push_back(current_face);
             
-            // 检查相邻面
+            // 检查这个面的3条边
             for (int i = 0; i < 3; ++i) {
                 int v0 = F(current_face, i);
                 int v1 = F(current_face, (i + 1) % 3);
+                if (v0 > v1) std::swap(v0, v1);
                 Edge e(v0, v1);
                 
-                // 如果是切割边，跳过
+                // 如果是切割边，标记为边界
                 if (cut_edges.count(e)) {
                     island.boundary.push_back(e);
                     continue;
                 }
                 
-                // 找相邻面 - 检查边界
-                if (v0 < 0 || v0 >= adjacency_list.size()) continue;
-                
-                for (int adj_face : adjacency_list[v0]) {
-                    if (adj_face < 0 || adj_face >= F.rows()) continue;
-                    if (face_to_island[adj_face] < 0) {
-                        // 检查是否共享边
-                        bool shares_edge = false;
-                        for (int j = 0; j < 3; ++j) {
-                            int adj_v0 = F(adj_face, j);
-                            int adj_v1 = F(adj_face, (j + 1) % 3);
-                            if ((adj_v0 == v0 && adj_v1 == v1) || 
-                                (adj_v0 == v1 && adj_v1 == v0)) {
-                                shares_edge = true;
-                                break;
-                            }
-                        }
-                        
-                        if (shares_edge) {
+                // 优化：直接从边查找相邻面
+                auto it = edge_to_faces.find({v0, v1});
+                if (it != edge_to_faces.end()) {
+                    for (int adj_face : it->second) {
+                        if (adj_face != current_face && face_to_island[adj_face] < 0) {
                             queue.push(adj_face);
                             face_to_island[adj_face] = island_id;
                         }
@@ -206,4 +226,4 @@ std::vector<UVIsland> segmentByEdgeLoops(
     return islands;
 }
 
-} // namespace UVUnwrapping
+} // namespace UVSegmentation

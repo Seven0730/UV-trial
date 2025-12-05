@@ -4,7 +4,14 @@
 #include <set>
 #include <Eigen/Core>
 
-namespace UVUnwrapping {
+/**
+ * @file uv_segmentation.h
+ * @brief 网格分割算法集合
+ * 
+ * 提供6种核心分割算法用于UV展开前的网格预处理
+ */
+
+namespace UVSegmentation {
 
 /**
  * @brief 表示一个边的结构
@@ -189,4 +196,4 @@ std::vector<UVIsland> segmentBySymmetry(
     double tolerance = 1e-6
 );
 
-} // namespace UVUnwrapping
+} // namespace UVSegmentation

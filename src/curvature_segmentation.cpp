@@ -6,7 +6,7 @@
 #include <igl/doublearea.h>
 #include <queue>
 
-namespace UVUnwrapping {
+namespace UVSegmentation {
 
 void computePrincipalCurvatures(
     const Eigen::MatrixXd& V,
@@ -231,4 +231,4 @@ std::vector<UVIsland> segmentByGaussianCurvature(
     return segmentByEdgeLoops(V, F, edge_loops);
 }
 
-} // namespace UVUnwrapping
+} // namespace UVSegmentation

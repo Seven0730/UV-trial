@@ -1,7 +1,6 @@
 #include <iostream>
 #include <igl/read_triangle_mesh.h>
 #include "uv_segmentation.h"
-#include "uv_unwrapping.h"
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
@@ -28,7 +27,7 @@ int main(int argc, char* argv[]) {
     std::cout << "适合：圆润物体、人头后侧、手臂内侧" << std::endl;
     
     double curvature_threshold = 0.5;
-    auto curvature_islands = UVUnwrapping::segmentByHighCurvature(
+    auto curvature_islands = UVSegmentation::segmentByHighCurvature(
         V, F, curvature_threshold
     );
     
@@ -47,7 +46,7 @@ int main(int argc, char* argv[]) {
     std::cout << "  • 负高斯曲率（鞍形）→ 通常需要切" << std::endl;
     
     // 计算高斯曲率
-    auto K = UVUnwrapping::computeGaussianCurvature(V, F);
+    auto K = UVSegmentation::computeGaussianCurvature(V, F);
     
     std::cout << "\n高斯曲率统计：" << std::endl;
     std::cout << "  最小: " << K.minCoeff() << std::endl;
@@ -55,7 +54,7 @@ int main(int argc, char* argv[]) {
     std::cout << "  平均: " << K.mean() << std::endl;
     
     double gaussian_threshold = 0.01;
-    auto gaussian_islands = UVUnwrapping::segmentByGaussianCurvature(
+    auto gaussian_islands = UVSegmentation::segmentByGaussianCurvature(
         V, F, gaussian_threshold
     );
     
@@ -70,7 +69,7 @@ int main(int argc, char* argv[]) {
     // 3. 主曲率分析
     std::cout << "\n=== 主曲率分析 ===" << std::endl;
     Eigen::VectorXd K_min, K_max;
-    UVUnwrapping::computePrincipalCurvatures(V, F, K_min, K_max);
+    UVSegmentation::computePrincipalCurvatures(V, F, K_min, K_max);
     
     std::cout << "最小主曲率范围: [" << K_min.minCoeff() 
               << ", " << K_min.maxCoeff() << "]" << std::endl;
