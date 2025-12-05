@@ -448,25 +448,7 @@ auto islands = segmentBySymmetry(V, F, symmetry_plane, 1e-6);
 - **OpenMesh**: https://www.graphics.rwth-aachen.de/software/openmesh/
   - 半边数据结构
 
-### 书籍
 
-- **Polygon Mesh Processing**
-  - Botsch, M., Kobbelt, L., Pauly, M., Alliez, P., & Lévy, B.
-  - 第6章：Parameterization
-
-## 📝 许可证
-
-本项目采用 MIT 许可证。
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 📧 联系
-
-如有问题或建议，请通过 GitHub Issues 联系。
-
----
 
 **Happy UV Unwrapping! 🎨**
 # UV-trial
