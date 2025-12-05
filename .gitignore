@@ -1,0 +1,40 @@
+# Build directories
+build/
+cmake-build-*/
+out/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Compiled files
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# macOS
+.DS_Store
+
+# Test output
+output/
+*.obj.uv
+*.png
+*.jpg
+
+# Dependencies (will be fetched by CMake)
+external/
+_deps/
