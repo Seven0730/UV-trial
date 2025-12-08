@@ -38,3 +38,15 @@ output/
 # Dependencies (will be fetched by CMake)
 external/
 _deps/
+
+# Generated / data
+/obj
+/results
+
+# Frontend (Vite/Node)
+web/node_modules/
+web/dist/
+web/.vite/
+web/npm-debug.log*
+web/yarn-error.log*
+web/pnpm-debug.log*
