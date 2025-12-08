@@ -2,6 +2,7 @@ import * as THREE from "three";
 
 export interface SurfacePoint {
   vertexIndex?: number;
+  vertexIndices?: [number, number, number];
   faceIndex?: number;
   barycentric?: [number, number, number];
   position: THREE.Vector3;

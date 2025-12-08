@@ -89,6 +89,14 @@ body {
   pointer-events: none;
 }
 
+.status.bottom-right {
+  left: auto;
+  right: 16px;
+  bottom: 16px;
+  pointer-events: none;
+  text-align: right;
+}
+
 .overlay {
   position: absolute;
   right: 16px;

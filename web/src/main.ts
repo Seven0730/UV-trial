@@ -4,6 +4,7 @@ import { loadOBJFromFile, loadOBJFromURL } from "./core/three/loaders";
 import { createThree, resizeRenderer, startRenderLoop } from "./core/three/scene";
 import { LinePreview } from "./features/segmentation/linePreview";
 import { pick } from "./features/segmentation/raycast";
+import { SegmentationStore } from "./features/segmentation/store";
 import "./style.css";
 
 const DEFAULT_OBJ_URL = "/obj/test_large.obj"; // place models under web/public/obj
@@ -19,7 +20,10 @@ app.innerHTML = `
     <h1>Geodesic Viewer</h1>
     <button id="loadDefault">加载默认 OBJ</button>
     <label for="meshFile">导入 OBJ<input id="meshFile" type="file" accept=".obj" /></label>
-    <button id="clearLine">清除点列</button>
+    <button id="startLine">新建线</button>
+    <button id="finishLine">结束线</button>
+    <button id="undoPoint">撤销一点</button>
+    <button id="exportJson">导出 JSON</button>
     <div id="progress" style="color: var(--muted); font-size: 12px;">idle</div>
   </div>
   <div class="main">
@@ -30,8 +34,9 @@ app.innerHTML = `
       线条为屏幕拾取的直线预览，后续会替换成测地线。<br/><br/>
       <strong>拖拽/点击导入 OBJ</strong>
       支持 50MB 模型。默认尝试读取 <code>${DEFAULT_OBJ_URL}</code>。<br/>
-      后续会在这里补充测地线绘制控件。
+      当前线数量会显示在右下角。
     </div>
+    <div class="status bottom-right" id="lineInfo">lines: 0</div>
   </div>
 `;
 
@@ -40,7 +45,11 @@ const statusBox = document.querySelector<HTMLDivElement>("#status")!;
 const progressBox = document.querySelector<HTMLDivElement>("#progress")!;
 const meshInput = document.querySelector<HTMLInputElement>("#meshFile")!;
 const defaultButton = document.querySelector<HTMLButtonElement>("#loadDefault")!;
-const clearButton = document.querySelector<HTMLButtonElement>("#clearLine")!;
+const startLineBtn = document.querySelector<HTMLButtonElement>("#startLine")!;
+const finishLineBtn = document.querySelector<HTMLButtonElement>("#finishLine")!;
+const undoPointBtn = document.querySelector<HTMLButtonElement>("#undoPoint")!;
+const exportJsonBtn = document.querySelector<HTMLButtonElement>("#exportJson")!;
+const lineInfoBox = document.querySelector<HTMLDivElement>("#lineInfo")!;
 
 const three = createThree(canvas);
 setupLights(three.scene);
@@ -50,7 +59,7 @@ three.scene.add(modelRoot);
 
 let boundingSize = 1;
 const linePreview = new LinePreview(three.scene, () => boundingSize);
-const controlPoints: THREE.Vector3[] = [];
+const store = new SegmentationStore();
 
 addTestBox();
 resizeRenderer(three);
@@ -69,10 +78,37 @@ defaultButton.addEventListener("click", async () => {
   await loadFromURL(DEFAULT_OBJ_URL);
 });
 
-clearButton.addEventListener("click", () => {
-  controlPoints.length = 0;
-  linePreview.clear();
-  setStatus("已清除点列");
+startLineBtn.addEventListener("click", () => {
+  store.startLine();
+  linePreview.update([]);
+  setStatus("新建线");
+  updateLineInfo();
+});
+
+finishLineBtn.addEventListener("click", () => {
+  store.finishLine();
+  linePreview.update([]);
+  setStatus("已结束当前线");
+  updateLineInfo();
+});
+
+undoPointBtn.addEventListener("click", () => {
+  store.undoLast();
+  linePreview.update(store.getCurrentPoints());
+  setStatus("撤销一点");
+  updateLineInfo();
+});
+
+exportJsonBtn.addEventListener("click", () => {
+  const json = JSON.stringify(store.toJSON(), null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "segmentation.json";
+  a.click();
+  URL.revokeObjectURL(url);
+  setStatus("已导出 segmentation.json");
 });
 
 canvas.addEventListener("pointerdown", async (event) => {
@@ -82,11 +118,18 @@ canvas.addEventListener("pointerdown", async (event) => {
     setStatus("未命中模型");
     return;
   }
-  controlPoints.push(hit.point);
-  linePreview.update(controlPoints);
-  setStatus(`点数: ${controlPoints.length} | face #${hit.faceIndex} bary=(${hit.barycentric
+  store.addControlPoint({
+    position: hit.point,
+    faceIndex: hit.faceIndex,
+    barycentric: hit.barycentric,
+    vertexIndices: hit.vertexIndices,
+  });
+  linePreview.update(store.getCurrentPoints());
+  const currentCount = store.getCurrentPoints().length;
+  setStatus(`当前线点数: ${currentCount} | face #${hit.faceIndex} bary=(${hit.barycentric
     .map((v) => v.toFixed(2))
     .join(",")})`);
+  updateLineInfo();
 });
 
 setupDragAndDrop(canvas);
@@ -94,7 +137,7 @@ setupDragAndDrop(canvas);
 async function loadFromFile(file: File) {
   setStatus(`读取本地 OBJ: ${file.name}`);
   try {
-    const group = await loadOBJFromFile(file, handleProgress);
+    const group = await loadOBJFromFile(file, { onProgress: handleProgress });
     swapModel(group);
     setStatus("本地模型加载成功");
   } catch (err) {
@@ -107,7 +150,7 @@ async function loadFromFile(file: File) {
 async function loadFromURL(url: string) {
   setStatus(`加载远程 OBJ: ${url}`);
   try {
-    const group = await loadOBJFromURL(url, handleProgress);
+    const group = await loadOBJFromURL(url, { onProgress: handleProgress });
     swapModel(group);
     setStatus("远程模型加载成功");
   } catch (err) {
@@ -128,8 +171,9 @@ function swapModel(group: THREE.Group) {
 
   modelRoot.add(group);
   boundingSize = centerAndFit(group, three.camera, three.controls);
-  controlPoints.length = 0;
+  store.clear();
   linePreview.clear();
+  updateLineInfo();
 }
 
 function setStatus(text: string) {
@@ -156,6 +200,8 @@ function addTestBox() {
   mesh.position.set(0, 0.5, 0);
   modelRoot.add(mesh);
   boundingSize = centerAndFit(mesh, three.camera, three.controls);
+  store.clear();
+  updateLineInfo();
 }
 
 function setupDragAndDrop(target: HTMLElement) {
@@ -183,6 +229,12 @@ function setupDragAndDrop(target: HTMLElement) {
       setStatus("未检测到文件");
     }
   });
+}
+
+function updateLineInfo() {
+  const lines = store.getLines();
+  const current = store.currentLine();
+  lineInfoBox.textContent = `lines: ${lines.length}${current ? ` | 当前: ${current.id}` : ""}`;
 }
 
 // Keep eslint/TS happy until we implement cleanup hooks.

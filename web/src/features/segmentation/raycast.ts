@@ -4,6 +4,7 @@ export interface RaycastHit {
   point: THREE.Vector3;
   faceIndex: number;
   barycentric: [number, number, number];
+  vertexIndices: [number, number, number];
   triangle: [THREE.Vector3, THREE.Vector3, THREE.Vector3];
 }
 
@@ -51,10 +52,12 @@ export function pick(
 
   THREE.Triangle.getBarycoord(hit.point, vA, vB, vC, tmpBary);
 
-  return {
+  const result: RaycastHit = {
     point: hit.point.clone(),
     faceIndex,
     barycentric: [tmpBary.x, tmpBary.y, tmpBary.z],
+    vertexIndices: [a, b, c],
     triangle: [vA, vB, vC],
   };
+  return result;
 }
