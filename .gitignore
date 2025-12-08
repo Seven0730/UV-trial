@@ -38,3 +38,7 @@ output/
 # Dependencies (will be fetched by CMake)
 external/
 _deps/
+
+/obj
+/results
+/test_results
