@@ -74,6 +74,21 @@ export class SegmentationStore {
     }
   }
 
+  setPathData(lineId: string, data: { pathPositions?: Float32Array; pathVertices?: number[]; pathLength?: number }) {
+    const line = this.state.lines.find((l) => l.id === lineId);
+    if (!line) return;
+    line.pathPositions = data.pathPositions ?? line.pathPositions;
+    line.pathVertices = data.pathVertices ?? line.pathVertices;
+    line.pathLength = data.pathLength ?? line.pathLength ?? this.computeLength(line.pathPositions);
+  }
+
+  setStatus(lineId: string, status: SegmentLine["status"], statusMessage?: string) {
+    const line = this.state.lines.find((l) => l.id === lineId);
+    if (!line) return;
+    line.status = status;
+    line.statusMessage = statusMessage;
+  }
+
   toJSON() {
     return {
       lines: this.state.lines.map((l) => ({
@@ -86,7 +101,23 @@ export class SegmentationStore {
           vertexIndices: c.vertexIndices,
         })),
         pathVertices: l.pathVertices,
+        pathLength: l.pathLength,
+        pathPositions: l.pathPositions ? Array.from(l.pathPositions) : undefined,
+        status: l.status,
+        statusMessage: l.statusMessage,
       })),
     };
+  }
+
+  private computeLength(array?: Float32Array) {
+    if (!array || array.length < 6) return undefined;
+    let length = 0;
+    for (let i = 3; i < array.length; i += 3) {
+      const dx = array[i] - array[i - 3];
+      const dy = array[i + 1] - array[i - 2];
+      const dz = array[i + 2] - array[i - 1];
+      length += Math.hypot(dx, dy, dz);
+    }
+    return length;
   }
 }
