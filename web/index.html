@@ -5,6 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>UV Geodesic Viewer</title>
     <link rel="stylesheet" href="/src/style.css" />
+    
+    <!-- Load geometry-processing-js in global scope -->
+    <script src="/geometry-processing-js/linear-algebra/linear-algebra-asm.js"></script>
+    <script src="/geometry-processing-js/linear-algebra/vector.js"></script>
+    <script src="/geometry-processing-js/linear-algebra/emscripten-memory-manager.js"></script>
+    <script src="/geometry-processing-js/linear-algebra/dense-matrix.js"></script>
+    <script src="/geometry-processing-js/linear-algebra/sparse-matrix.js"></script>
+    <script src="/geometry-processing-js/linear-algebra/complex.js"></script>
+    <script src="/geometry-processing-js/core/vertex.js"></script>
+    <script src="/geometry-processing-js/core/edge.js"></script>
+    <script src="/geometry-processing-js/core/face.js"></script>
+    <script src="/geometry-processing-js/core/halfedge.js"></script>
+    <script src="/geometry-processing-js/core/corner.js"></script>
+    <script src="/geometry-processing-js/core/mesh.js"></script>
+    <script src="/geometry-processing-js/core/geometry.js"></script>
+    <script src="/geometry-processing-js/utils/solvers.js"></script>
+    <script src="/geometry-processing-js/projects/geodesic-distance/heat-method.js"></script>
   </head>
   <body>
     <div id="app"></div>

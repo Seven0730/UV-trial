@@ -1,5 +1,38 @@
 # Heat Method 测地线工具集
 
+该仓库实现了基于 **Heat Method** 的测地线距离计算和路径追踪，包含 C++ 和 Web 两种实现方式。Heat Method 是目前几何处理领域最先进、最高效的测地线算法之一，由 Keenan Crane 等人提出。
+
+## 🌐 Web 实现（推荐）
+
+基于 `geometry-processing-js` 的纯 JavaScript/TypeScript 实现，无需编译，直接在浏览器中运行。
+
+### 快速开始
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+访问 <http://localhost:4174> 开始使用。
+
+### 功能特性
+
+- ✅ **交互式测地线绘制** - Shift + 单击添加控制点，自动计算点间测地线
+- ✅ **Heat Method 算法** - 使用热扩散模拟求解，速度快且结果平滑
+- ✅ **管状路径可视化** - 使用 TubeGeometry 渲染，带深度偏移避免 Z-Fighting
+- ✅ **Web Worker 异步计算** - 不阻塞 UI，支持大型模型
+- ✅ **多点路径支持** - 自动连接多段测地线
+- ✅ **路径数据导出** - 导出 JSON 格式的路径数据
+
+详见 [`web/IMPLEMENTATION.md`](web/IMPLEMENTATION.md) 了解完整实现细节。
+
+---
+
+## 🖥️ C++ 实现
+
+基于 libigl 的高性能 C++ 实现，适用于离线批处理和大规模计算。
+
 该仓库精简为单一职责：在三角网格上通过 Heat Method 计算测地线距离与路径，并导出可直接喂给 Three.js 的 polyline 数据。所有非测地线代码（分割、展开、xatlas 等）均已移除，以便专注于这一算法。
 
 ## 特性

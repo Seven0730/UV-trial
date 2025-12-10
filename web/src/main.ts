@@ -3,10 +3,8 @@ import { centerAndFit, disposeObject3D, setupLights } from "./core/three/helpers
 import { loadOBJFromFile, loadOBJFromURL } from "./core/three/loaders";
 import { createThree, resizeRenderer, startRenderLoop } from "./core/three/scene";
 import { LinePreview } from "./features/segmentation/linePreview";
-import { PathRenderer } from "./features/segmentation/pathRenderer";
 import { pick } from "./features/segmentation/raycast";
 import { SegmentationStore } from "./features/segmentation/store";
-import type { GeodesicResponse } from "./workers/types";
 import "./style.css";
 
 const DEFAULT_OBJ_URL = "/obj/test_large.obj"; // place models under web/public/obj
@@ -19,7 +17,7 @@ if (!app) {
 
 app.innerHTML = `
   <div class="toolbar">
-    <h1>Geodesic Viewer</h1>
+    <h1>Segmentation Viewer</h1>
     <button id="loadDefault">加载默认 OBJ</button>
     <label for="meshFile">导入 OBJ<input id="meshFile" type="file" accept=".obj" /></label>
     <button id="startLine">新建线</button>
@@ -32,11 +30,9 @@ app.innerHTML = `
     <canvas id="viewport"></canvas>
     <div class="status" id="status">准备就绪</div>
     <div class="overlay">
-      <strong>Shift+单击模型添加控制点</strong>
-      线条为屏幕拾取的直线预览，后续会替换成测地线。<br/><br/>
-      <strong>拖拽/点击导入 OBJ</strong>
-      支持 50MB 模型。默认尝试读取 <code>${DEFAULT_OBJ_URL}</code>。<br/>
-      当前线数量会显示在右下角。
+      <strong>Shift+单击</strong> 添加控制点，预览为直线段（贴合拾取点）。<br/><br/>
+      <strong>拖拽/点击导入 OBJ</strong>，默认加载 <code>test_large.obj</code>。<br/><br/>
+      当前线数量显示在右下角。
     </div>
     <div class="status bottom-right" id="lineInfo">lines: 0</div>
   </div>
@@ -61,7 +57,6 @@ three.scene.add(modelRoot);
 
 let boundingSize = 1;
 const linePreview = new LinePreview(three.scene, () => boundingSize);
-const pathRenderer = new PathRenderer(three.scene, () => boundingSize);
 const store = new SegmentationStore();
 
 addTestBox();
@@ -128,7 +123,7 @@ canvas.addEventListener("pointerdown", async (event) => {
     vertexIndices: hit.vertexIndices,
   });
   linePreview.update(store.getCurrentPoints());
-  void requestGeodesicForCurrentLine(hit);
+
   const currentCount = store.getCurrentPoints().length;
   setStatus(`当前线点数: ${currentCount} | face #${hit.faceIndex} bary=(${hit.barycentric
     .map((v) => v.toFixed(2))
@@ -143,7 +138,6 @@ async function loadFromFile(file: File) {
   try {
     const group = await loadOBJFromFile(file, { onProgress: handleProgress });
     swapModel(group);
-    await initWorkerMeshFromGroup(group);
     setStatus("本地模型加载成功");
   } catch (err) {
     setStatus(`OBJ 解析失败: ${(err as Error).message}`);
@@ -157,7 +151,6 @@ async function loadFromURL(url: string) {
   try {
     const group = await loadOBJFromURL(url, { onProgress: handleProgress });
     swapModel(group);
-    await initWorkerMeshFromGroup(group);
     setStatus("远程模型加载成功");
   } catch (err) {
     setStatus(`下载/解析失败: ${(err as Error).message}`);
@@ -179,7 +172,6 @@ function swapModel(group: THREE.Group) {
   boundingSize = centerAndFit(group, three.camera, three.controls);
   store.clear();
   linePreview.clear();
-  pathRenderer.clear();
   updateLineInfo();
 }
 
@@ -208,7 +200,6 @@ function addTestBox() {
   modelRoot.add(mesh);
   boundingSize = centerAndFit(mesh, three.camera, three.controls);
   store.clear();
-  void initWorkerMeshFromGroup(modelRoot);
   updateLineInfo();
 }
 
@@ -242,122 +233,7 @@ function setupDragAndDrop(target: HTMLElement) {
 function updateLineInfo() {
   const lines = store.getLines();
   const current = store.currentLine();
-  const statusText = current?.status ? ` | 状态: ${current.status}${current.statusMessage ? `(${current.statusMessage})` : ""}` : "";
-  lineInfoBox.textContent = `lines: ${lines.length}${current ? ` | 当前: ${current.id}` : ""}${statusText}`;
-}
-
-// --- Heat Method worker wiring (solver placeholder) ---
-const heatWorker = new Worker(new URL("./workers/heatWorker.ts", import.meta.url), { type: "module" });
-let requestSeq = 1;
-const pendingRequests = new Map<string, (res: GeodesicResponse) => void>();
-
-heatWorker.onmessage = (event: MessageEvent) => {
-  const res = event.data as GeodesicResponse;
-  const handler = pendingRequests.get(res.requestId);
-  if (handler) {
-    pendingRequests.delete(res.requestId);
-    handler(res);
-  }
-};
-
-function sendToWorker(message: Record<string, unknown>) {
-  const msg: Record<string, unknown> & { requestId: string } = {
-    requestId: `req-${requestSeq++}`,
-    ...message,
-  };
-  return new Promise<GeodesicResponse>((resolve) => {
-    pendingRequests.set(msg.requestId, resolve);
-    heatWorker.postMessage(msg, collectTransferables(msg));
-  });
-}
-
-function collectTransferables(msg: Record<string, unknown>): Transferable[] {
-  const transferables: Transferable[] = [];
-  const maybePush = (val: unknown) => {
-    if (!val) return;
-    if (ArrayBuffer.isView(val)) {
-      transferables.push(val.buffer);
-    } else if (val instanceof ArrayBuffer) {
-      transferables.push(val);
-    }
-  };
-  maybePush(msg["positions"]);
-  maybePush(msg["indices"]);
-  maybePush(msg["pathPositions"]);
-  return transferables;
-}
-
-async function initWorkerMeshFromGroup(group: THREE.Group) {
-  const mesh = findFirstMesh(group);
-  if (!mesh) {
-    setStatus("未找到可用网格以初始化测地线");
-    return;
-  }
-  const { positions, indices } = extractGeometry(mesh.geometry as THREE.BufferGeometry);
-  await sendToWorker({ type: "init-mesh", positions, indices });
-}
-
-async function requestGeodesicForCurrentLine(hit: ReturnType<typeof pick> | null) {
-  const current = store.currentLine();
-  if (!current || !hit) return;
-  const sourceVertex = hit.vertexIndices?.[0] ?? hit.faceIndex ?? 0;
-  store.setStatus(current.id, "pending", "计算中");
-  setStatus("计算测地线中（占位实现）...");
-  const res = await sendToWorker({ type: "compute-geodesic", sourceVertex });
-  if (res.type === "error" || !res.payload) {
-    store.setStatus(current.id, "error", res.error ?? "unknown");
-    setStatus(`测地线计算失败: ${res.error ?? "unknown"}`);
-    return;
-  }
-  store.setPathData(current.id, {
-    pathPositions: res.payload.pathPositions,
-    pathVertices: res.payload.pathVertices,
-    pathLength: res.payload.length,
-  });
-  store.setStatus(current.id, "done", "完成");
-  pathRenderer.render(store.getLines());
-  setStatus("测地线计算完成（占位结果）");
-}
-
-function findFirstMesh(group: THREE.Group): THREE.Mesh | null {
-  let found: THREE.Mesh | null = null;
-  group.traverse((child) => {
-    if (found) return;
-    const mesh = child as THREE.Mesh;
-    if (mesh.isMesh && mesh.geometry instanceof THREE.BufferGeometry) {
-      found = mesh;
-    }
-  });
-  return found;
-}
-
-function extractGeometry(
-  geometry: THREE.BufferGeometry,
-): { positions: Float32Array; indices: Uint32Array | Uint16Array } {
-  const positionAttr = geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
-  const indexAttr = geometry.getIndex();
-  if (!positionAttr) {
-    throw new Error("Geometry missing position attribute");
-  }
-
-  const positions =
-    positionAttr.array instanceof Float32Array ? positionAttr.array : new Float32Array(positionAttr.array);
-  let indices: Uint32Array | Uint16Array;
-
-  if (indexAttr) {
-    const arr = indexAttr.array;
-    if (arr instanceof Uint32Array || arr instanceof Uint16Array) {
-      indices = arr;
-    } else {
-      indices = new Uint32Array(arr);
-    }
-  } else {
-    const count = positionAttr.count;
-    indices = count > 65535 ? new Uint32Array(count) : new Uint16Array(count);
-    for (let i = 0; i < count; i++) indices[i] = i;
-  }
-
-  return { positions, indices };
+  lineInfoBox.textContent = `lines: ${lines.length}${current ? ` | 当前: ${current.id}` : ""}`;
 }
 
 // Keep eslint/TS happy until we implement cleanup hooks.

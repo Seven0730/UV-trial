@@ -11,11 +11,6 @@ export interface SurfacePoint {
 export interface SegmentLine {
   id: string;
   controlPoints: SurfacePoint[];
-  pathVertices?: number[];
-  pathPositions?: Float32Array;
-  pathLength?: number;
-  status?: "idle" | "pending" | "done" | "error";
-  statusMessage?: string;
 }
 
 export interface SegmentationState {

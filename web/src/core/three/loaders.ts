@@ -25,6 +25,10 @@ function ensureStandardMaterial(mat: THREE.Material | undefined): THREE.Material
   if (mat) {
     // Preserve existing material/color; only enforce double side for thin meshes.
     mat.side = THREE.DoubleSide;
+    // Enable polygon offset to prevent z-fighting with lines drawn on surface
+    (mat as THREE.MeshStandardMaterial).polygonOffset = true;
+    (mat as THREE.MeshStandardMaterial).polygonOffsetFactor = 1;
+    (mat as THREE.MeshStandardMaterial).polygonOffsetUnits = 1;
     return mat;
   }
   return new THREE.MeshStandardMaterial({
@@ -32,6 +36,9 @@ function ensureStandardMaterial(mat: THREE.Material | undefined): THREE.Material
     metalness: 0.05,
     roughness: 0.9,
     side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
   });
 }
 
