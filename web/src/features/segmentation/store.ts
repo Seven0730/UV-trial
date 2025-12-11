@@ -49,6 +49,30 @@ export class SegmentationStore {
     segment.points.push(point);
   }
 
+  updateControlPoint(index: number, point: SurfacePoint) {
+    const line = this.currentLine();
+    if (!line) return;
+    if (index < 0 || index >= line.controlPoints.length) return;
+    const updated: SurfacePoint = {
+      position: point.position.clone(),
+      faceIndex: point.faceIndex,
+      barycentric: point.barycentric,
+      vertexIndex: point.vertexIndex,
+      vertexIndices: point.vertexIndices,
+    };
+    line.controlPoints[index] = updated;
+    if (line.segments) {
+      let offset = 0;
+      for (const seg of line.segments) {
+        if (index < offset + seg.points.length) {
+          seg.points[index - offset] = { ...updated, position: updated.position.clone() };
+          break;
+        }
+        offset += seg.points.length;
+      }
+    }
+  }
+
   setPathData(lineId: string, data: { pathPositions?: Float32Array; pathVertices?: number[] }) {
     const line = this.state.lines.find((l) => l.id === lineId);
     if (!line) return;

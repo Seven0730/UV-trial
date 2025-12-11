@@ -28,13 +28,21 @@ app.innerHTML = `
     <label style="margin-left:12px;">线粗<input id="lineWidth" type="range" min="0.001" max="0.02" step="0.001" value="0.003" style="vertical-align:middle;" /></label>
     <label style="margin-left:8px;">点粗<input id="pointSize" type="range" min="0.002" max="0.02" step="0.001" value="0.006" style="vertical-align:middle;" /></label>
     <label style="margin-left:8px; font-size:12px; color: var(--muted);"><input id="showPoints" type="checkbox" /> 显示路径点</label>
+    <label style="margin-left:8px; font-size:12px; color: var(--muted);">
+      模式
+      <select id="modeSelect" style="vertical-align:middle;">
+        <option value="draw" selected>划线模式</option>
+        <option value="edit">微调模式</option>
+      </select>
+    </label>
     <div id="progress" style="color: var(--muted); font-size: 12px;">idle</div>
   </div>
   <div class="main">
     <canvas id="viewport"></canvas>
     <div class="status" id="status">准备就绪</div>
     <div class="overlay">
-      <strong>Shift+单击</strong> 添加控制点，预览为直线段（贴合拾取点）。<br/><br/>
+      <strong>模式切换</strong> 划线模式：Shift+单击添加点；微调模式：单击拖动已有点，在表面滑动。<br/><br/>
+      <strong>路径</strong> 依网格边最短路生成，默认隐藏路径点，可通过复选框显示；线/点粗细可调。<br/><br/>
       <strong>拖拽/点击导入 OBJ</strong>，默认加载 <code>test_large.obj</code>。<br/><br/>
       当前线数量显示在右下角。
     </div>
@@ -54,6 +62,7 @@ const exportJsonBtn = document.querySelector<HTMLButtonElement>("#exportJson")!;
 const lineWidthInput = document.querySelector<HTMLInputElement>("#lineWidth") as HTMLInputElement | null;
 const pointSizeInput = document.querySelector<HTMLInputElement>("#pointSize") as HTMLInputElement | null;
 const showPointsInput = document.querySelector<HTMLInputElement>("#showPoints") as HTMLInputElement | null;
+const modeSelect = document.querySelector<HTMLSelectElement>("#modeSelect");
 const lineInfoBox = document.querySelector<HTMLDivElement>("#lineInfo")!;
 
 const three = createThree(canvas);
@@ -66,6 +75,9 @@ let boundingSize = 1;
 const linePreview = new LinePreview(three.scene, () => boundingSize);
 const store = new SegmentationStore();
 let meshGraph: MeshGraphBuilder | null = null;
+let draggingTarget: { kind: "control"; index: number } | { kind: "path"; index: number } | null = null;
+type InteractionMode = "draw" | "edit";
+let mode: InteractionMode = "draw";
 
 addTestBox();
 resizeRenderer(three);
@@ -102,6 +114,14 @@ showPointsInput?.addEventListener("change", () => {
   rebuildPreview();
 });
 
+modeSelect?.addEventListener("change", () => {
+  mode = (modeSelect.value as InteractionMode) ?? "draw";
+  const modeText = mode === "draw" ? "划线模式" : "微调模式";
+  setStatus(`已切换到${modeText}`);
+  // 微调模式下尽量避免 Orbit 干扰，绘制时保持正常
+  three.controls.enableRotate = mode !== "edit";
+});
+
 startLineBtn.addEventListener("click", () => {
   store.startLine();
   linePreview.update([]);
@@ -136,17 +156,31 @@ exportJsonBtn.addEventListener("click", () => {
 });
 
 canvas.addEventListener("pointerdown", async (event) => {
-  if (event.button !== 0 || !event.shiftKey) return; // require shift to avoid干扰旋转
+  if (mode === "edit") {
+    const hit = pick(event, three.camera, modelRoot);
+    if (hit) {
+      const target = findNearestEditablePoint(hit.point);
+      if (target) {
+        draggingTarget = target;
+        setStatus(target.kind === "control" ? `拖动控制点 #${target.index + 1}` : `拖动路径点 #${target.index + 1}`);
+        three.controls.enableRotate = false;
+        return;
+      }
+    }
+  }
+  if (mode !== "draw" || event.button !== 0 || !event.shiftKey) return; // require shift to avoid干扰旋转
   const hit = pick(event, three.camera, modelRoot);
   if (!hit) {
     setStatus("未命中模型");
     return;
   }
+  const vertexIndex = selectClosestVertex(hit);
   store.addControlPoint({
     position: hit.point,
     faceIndex: hit.faceIndex,
     barycentric: hit.barycentric,
     vertexIndices: hit.vertexIndices,
+    vertexIndex,
   });
   await appendPathUsingGraph(hit);
 
@@ -158,6 +192,34 @@ canvas.addEventListener("pointerdown", async (event) => {
 });
 
 setupDragAndDrop(canvas);
+
+canvas.addEventListener("pointermove", (event) => {
+  if (!draggingTarget) return;
+  const hit = pick(event, three.camera, modelRoot);
+  if (!hit) return;
+  const vertexIndex = selectClosestVertex(hit);
+  if (draggingTarget.kind === "control") {
+    store.updateControlPoint(draggingTarget.index, {
+      position: hit.point,
+      faceIndex: hit.faceIndex,
+      barycentric: hit.barycentric,
+      vertexIndices: hit.vertexIndices,
+      vertexIndex,
+    });
+    recomputePathFromControlPoints();
+  } else if (draggingTarget.kind === "path") {
+    updatePathVertex(draggingTarget.index, vertexIndex);
+  }
+});
+
+canvas.addEventListener("pointerup", () => {
+  draggingTarget = null;
+  three.controls.enableRotate = mode !== "edit";
+});
+canvas.addEventListener("pointerleave", () => {
+  draggingTarget = null;
+  three.controls.enableRotate = mode !== "edit";
+});
 
 async function appendPathUsingGraph(hit: ReturnType<typeof pick>) {
   if (!meshGraph) {
@@ -335,6 +397,141 @@ function addTestBox() {
   linePreview.clear();
   meshGraph = buildMeshGraph(modelRoot);
   updateLineInfo();
+}
+
+function recomputePathFromControlPoints() {
+  const line = store.currentLine();
+  if (!line || !meshGraph) {
+    linePreview.update(store.getCurrentPoints());
+    return;
+  }
+  const cps = line.controlPoints;
+  if (cps.length === 0) {
+    store.setPathData(line.id, { pathVertices: [], pathPositions: new Float32Array() });
+    linePreview.update([]);
+    return;
+  }
+
+  const positions: number[] = [];
+  const pathVertices: number[] = [];
+
+  const pushPos = (pos: THREE.Vector3) => {
+    positions.push(pos.x, pos.y, pos.z);
+  };
+
+  let currentVertex =
+    cps[0].vertexIndex ?? selectClosestVertex({
+      point: cps[0].position,
+      faceIndex: cps[0].faceIndex ?? -1,
+      barycentric: cps[0].barycentric ?? [1, 0, 0],
+      vertexIndices: cps[0].vertexIndices ?? [0, 0, 0],
+      triangle: [cps[0].position, cps[0].position, cps[0].position],
+    } as any);
+
+  const firstPos = meshGraph.getPosition(currentVertex);
+  if (firstPos) {
+    pushPos(firstPos);
+    pathVertices.push(currentVertex);
+  }
+
+  for (let i = 1; i < cps.length; i++) {
+    const targetVertex = cps[i].vertexIndex ?? currentVertex;
+    const segment = meshGraph.shortestPath(currentVertex, targetVertex);
+    if (!segment.length) continue;
+    // append skipping duplicate start
+    for (let j = 1; j < segment.length; j++) {
+      const v = segment[j];
+      const pos = meshGraph.getPosition(v);
+      if (pos) pushPos(pos);
+      pathVertices.push(v);
+    }
+    currentVertex = targetVertex;
+  }
+
+  store.setPathData(line.id, {
+    pathVertices,
+    pathPositions: new Float32Array(positions),
+  });
+
+  const pts: THREE.Vector3[] = [];
+  for (let i = 0; i < positions.length; i += 3) {
+    pts.push(new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]));
+  }
+  linePreview.update(pts);
+}
+
+function findNearestControlPoint(target: THREE.Vector3): number | null {
+  const line = store.currentLine();
+  if (!line) return null;
+  let nearest = -1;
+  let minDist = Infinity;
+  line.controlPoints.forEach((p, idx) => {
+    const d = p.position.distanceTo(target);
+    if (d < minDist) {
+      minDist = d;
+      nearest = idx;
+    }
+  });
+  if (nearest === -1) return null;
+  const threshold = boundingSize * 0.05;
+  return minDist <= threshold ? nearest : null;
+}
+
+function findNearestEditablePoint(target: THREE.Vector3): { kind: "control"; index: number } | { kind: "path"; index: number } | null {
+  const line = store.currentLine();
+  if (!line) return null;
+
+  let best: { kind: "control"; index: number } | { kind: "path"; index: number } | null = null;
+  let minDist = Infinity;
+
+  // check control points
+  line.controlPoints.forEach((p, idx) => {
+    const d = p.position.distanceTo(target);
+    if (d < minDist) {
+      minDist = d;
+      best = { kind: "control", index: idx };
+    }
+  });
+
+  // check path points
+  if (line.pathPositions) {
+    for (let i = 0; i < line.pathPositions.length; i += 3) {
+      const vx = line.pathPositions[i];
+      const vy = line.pathPositions[i + 1];
+      const vz = line.pathPositions[i + 2];
+      const d = target.distanceToSquared(new THREE.Vector3(vx, vy, vz));
+      if (d < minDist * minDist) {
+        minDist = Math.sqrt(d);
+        best = { kind: "path", index: i / 3 };
+      }
+    }
+  }
+
+  const threshold = boundingSize * 0.05;
+  return minDist <= threshold ? best : null;
+}
+
+function updatePathVertex(pathIndex: number, newVertex: number) {
+  const line = store.currentLine();
+  if (!line || !meshGraph || !line.pathVertices || !line.pathPositions) return;
+  if (pathIndex < 0 || pathIndex >= line.pathVertices.length) return;
+  const pos = meshGraph.getPosition(newVertex);
+  if (!pos) return;
+
+  const verts = [...line.pathVertices];
+  verts[pathIndex] = newVertex;
+  const positions = new Float32Array(line.pathPositions);
+  positions[pathIndex * 3] = pos.x;
+  positions[pathIndex * 3 + 1] = pos.y;
+  positions[pathIndex * 3 + 2] = pos.z;
+
+  store.setPathData(line.id, { pathVertices: verts, pathPositions: positions });
+
+  const pts: THREE.Vector3[] = [];
+  for (let i = 0; i < positions.length; i += 3) {
+    pts.push(new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]));
+  }
+  linePreview.update(pts);
 }
 
 function setupDragAndDrop(target: HTMLElement) {
