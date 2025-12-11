@@ -12,6 +12,8 @@ export interface SegmentLine {
   id: string;
   controlPoints: SurfacePoint[];
   segments?: Segment[];
+  pathVertices?: number[];
+  pathPositions?: Float32Array;
 }
 
 export interface SegmentationState {

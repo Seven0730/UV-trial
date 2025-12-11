@@ -49,6 +49,13 @@ export class SegmentationStore {
     segment.points.push(point);
   }
 
+  setPathData(lineId: string, data: { pathPositions?: Float32Array; pathVertices?: number[] }) {
+    const line = this.state.lines.find((l) => l.id === lineId);
+    if (!line) return;
+    line.pathPositions = data.pathPositions ?? line.pathPositions;
+    line.pathVertices = data.pathVertices ?? line.pathVertices;
+  }
+
   undoLast() {
     const line = this.currentLine();
     if (!line) return;
@@ -128,6 +135,8 @@ export class SegmentationStore {
           vertexIndex: c.vertexIndex,
           vertexIndices: c.vertexIndices,
         })),
+        pathVertices: l.pathVertices,
+        pathPositions: l.pathPositions ? Array.from(l.pathPositions) : undefined,
         segments: l.segments?.map((s) => ({
           id: s.id,
           points: s.points.map((p) => ({

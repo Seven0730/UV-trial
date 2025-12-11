@@ -3,6 +3,7 @@ import { centerAndFit, disposeObject3D, setupLights } from "./core/three/helpers
 import { loadOBJFromFile, loadOBJFromURL } from "./core/three/loaders";
 import { createThree, resizeRenderer, startRenderLoop } from "./core/three/scene";
 import { LinePreview } from "./features/segmentation/linePreview";
+import { MeshGraphBuilder } from "./features/segmentation/meshGraph";
 import { pick } from "./features/segmentation/raycast";
 import { SegmentationStore } from "./features/segmentation/store";
 import "./style.css";
@@ -58,6 +59,7 @@ three.scene.add(modelRoot);
 let boundingSize = 1;
 const linePreview = new LinePreview(three.scene, () => boundingSize);
 const store = new SegmentationStore();
+let meshGraph: MeshGraphBuilder | null = null;
 
 addTestBox();
 resizeRenderer(three);
@@ -123,7 +125,7 @@ canvas.addEventListener("pointerdown", async (event) => {
     barycentric: hit.barycentric,
     vertexIndices: hit.vertexIndices,
   });
-  linePreview.update(store.getCurrentPoints());
+  await appendPathUsingGraph(hit);
 
   const currentCount = store.getCurrentPoints().length;
   setStatus(`当前线点数: ${currentCount} | face #${hit.faceIndex} bary=(${hit.barycentric
@@ -133,6 +135,76 @@ canvas.addEventListener("pointerdown", async (event) => {
 });
 
 setupDragAndDrop(canvas);
+
+async function appendPathUsingGraph(hit: ReturnType<typeof pick>) {
+  if (!meshGraph) {
+    linePreview.update(store.getCurrentPoints());
+    return;
+  }
+  const line = store.currentLine();
+  if (!line) return;
+  const nearestVertex = selectClosestVertex(hit);
+  const prevVertex = line.pathVertices?.length ? line.pathVertices[line.pathVertices.length - 1] : undefined;
+
+  if (prevVertex === undefined) {
+    const pos = meshGraph.getPosition(nearestVertex);
+    if (pos) {
+      store.setPathData(line.id, {
+        pathVertices: [nearestVertex],
+        pathPositions: new Float32Array(pos.toArray()),
+      });
+      linePreview.update([pos.clone()]);
+    }
+    return;
+  }
+
+  const path = meshGraph.shortestPath(prevVertex, nearestVertex);
+  if (!path.length) {
+    linePreview.update(store.getCurrentPoints());
+    return;
+  }
+  const positions: THREE.Vector3[] = [];
+  const existing = line.pathPositions ? Array.from(line.pathPositions) : [];
+  // convert to Vector3 and merge with existing path (skip duplicate start)
+  for (let i = 0; i < path.length; i++) {
+    const pos = meshGraph.getPosition(path[i]);
+    if (pos) positions.push(pos.clone());
+  }
+  const merged = new Float32Array(existing.length + positions.length * 3 - 3);
+  if (existing.length) merged.set(existing);
+  let offset = existing.length;
+  for (let i = 0; i < positions.length; i++) {
+    if (existing.length && i === 0) continue; // skip duplicate start
+    merged[offset++] = positions[i].x;
+    merged[offset++] = positions[i].y;
+    merged[offset++] = positions[i].z;
+  }
+
+  const mergedVertices = [...(line.pathVertices ?? []), ...path.slice(1)]; // skip first to avoid dup
+  store.setPathData(line.id, { pathVertices: mergedVertices, pathPositions: merged });
+
+  // Build Vector3 list for preview
+  const allPoints: THREE.Vector3[] = [];
+  for (let i = 0; i < merged.length; i += 3) {
+    allPoints.push(new THREE.Vector3(merged[i], merged[i + 1], merged[i + 2]));
+  }
+  linePreview.update(allPoints);
+}
+
+function selectClosestVertex(hit: ReturnType<typeof pick>): number {
+  const weights = hit.barycentric;
+  const indices = hit.vertexIndices;
+  if (!weights || !indices) return indices?.[0] ?? 0;
+  let maxIdx = 0;
+  if (weights[1] > weights[maxIdx]) maxIdx = 1;
+  if (weights[2] > weights[maxIdx]) maxIdx = 2;
+  const origIndex = indices[maxIdx];
+  if (meshGraph) {
+    const merged = meshGraph.getMergedIndex(origIndex);
+    if (merged !== -1) return merged;
+  }
+  return origIndex;
+}
 
 async function loadFromFile(file: File) {
   setStatus(`读取本地 OBJ: ${file.name}`);
@@ -173,6 +245,7 @@ function swapModel(group: THREE.Group) {
   boundingSize = centerAndFit(group, three.camera, three.controls);
   store.clear();
   linePreview.clear();
+  meshGraph = buildMeshGraph(group);
   updateLineInfo();
 }
 
@@ -189,6 +262,24 @@ function handleProgress(progress: number) {
   progressBox.textContent = `${pct}%`;
 }
 
+function buildMeshGraph(group: THREE.Group): MeshGraphBuilder | null {
+  let found: THREE.Mesh | null = null;
+  group.traverse((child) => {
+    if (found) return;
+    const mesh = child as THREE.Mesh;
+    if (mesh.isMesh && mesh.geometry instanceof THREE.BufferGeometry) {
+      found = mesh;
+    }
+  });
+  if (!found) return null;
+  try {
+    return new MeshGraphBuilder(found.geometry as THREE.BufferGeometry);
+  } catch (err) {
+    console.warn("Failed to build mesh graph", err);
+    return null;
+  }
+}
+
 function addTestBox() {
   const geo = new THREE.BoxGeometry(1, 1, 1);
   const mat = new THREE.MeshStandardMaterial({
@@ -201,6 +292,8 @@ function addTestBox() {
   modelRoot.add(mesh);
   boundingSize = centerAndFit(mesh, three.camera, three.controls);
   store.clear();
+  linePreview.clear();
+  meshGraph = buildMeshGraph(modelRoot);
   updateLineInfo();
 }
 
