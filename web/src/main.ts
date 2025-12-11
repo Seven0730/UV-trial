@@ -25,6 +25,8 @@ app.innerHTML = `
     <button id="finishLine">结束线</button>
     <button id="undoPoint">撤销一点</button>
     <button id="exportJson">导出 JSON</button>
+    <label style="margin-left:12px;">线粗<input id="lineWidth" type="range" min="0.001" max="0.02" step="0.001" value="0.003" style="vertical-align:middle;" /></label>
+    <label style="margin-left:8px;">点粗<input id="pointSize" type="range" min="0.002" max="0.02" step="0.001" value="0.006" style="vertical-align:middle;" /></label>
     <div id="progress" style="color: var(--muted); font-size: 12px;">idle</div>
   </div>
   <div class="main">
@@ -48,6 +50,8 @@ const startLineBtn = document.querySelector<HTMLButtonElement>("#startLine")!;
 const finishLineBtn = document.querySelector<HTMLButtonElement>("#finishLine")!;
 const undoPointBtn = document.querySelector<HTMLButtonElement>("#undoPoint")!;
 const exportJsonBtn = document.querySelector<HTMLButtonElement>("#exportJson")!;
+const lineWidthInput = document.querySelector<HTMLInputElement>("#lineWidth") as HTMLInputElement | null;
+const pointSizeInput = document.querySelector<HTMLInputElement>("#pointSize") as HTMLInputElement | null;
 const lineInfoBox = document.querySelector<HTMLDivElement>("#lineInfo")!;
 
 const three = createThree(canvas);
@@ -77,6 +81,18 @@ meshInput.addEventListener("change", async (event) => {
 
 defaultButton.addEventListener("click", async () => {
   await loadFromURL(DEFAULT_OBJ_URL);
+});
+
+lineWidthInput?.addEventListener("input", () => {
+  const val = parseFloat(lineWidthInput.value);
+  linePreview.setStyles({ tubeRadiusFactor: val });
+  rebuildPreview();
+});
+
+pointSizeInput?.addEventListener("input", () => {
+  const val = parseFloat(pointSizeInput.value);
+  linePreview.setStyles({ pointSizeFactor: val });
+  rebuildPreview();
 });
 
 startLineBtn.addEventListener("click", () => {
@@ -278,6 +294,23 @@ function buildMeshGraph(group: THREE.Group): MeshGraphBuilder | null {
     console.warn("Failed to build mesh graph", err);
     return null;
   }
+}
+
+function rebuildPreview() {
+  const line = store.currentLine();
+  if (!line) {
+    linePreview.update([]);
+    return;
+  }
+  if (line.pathPositions && line.pathPositions.length >= 3) {
+    const pts: THREE.Vector3[] = [];
+    for (let i = 0; i < line.pathPositions.length; i += 3) {
+      pts.push(new THREE.Vector3(line.pathPositions[i], line.pathPositions[i + 1], line.pathPositions[i + 2]));
+    }
+    linePreview.update(pts);
+    return;
+  }
+  linePreview.update(store.getCurrentPoints());
 }
 
 function addTestBox() {

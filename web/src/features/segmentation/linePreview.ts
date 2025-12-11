@@ -6,16 +6,23 @@ export class LinePreview {
   private sphereGeo = new THREE.SphereGeometry(1, 16, 12);
   private sphereMat = new THREE.MeshStandardMaterial({ color: 0xff5c5c, emissive: 0x111111 });
   private tubeMat = new THREE.MeshStandardMaterial({ color: 0xff5c5c, emissive: 0x111111 });
+  private tubeRadiusFactor = 0.003;
+  private pointSizeFactor = 0.006;
 
   constructor(private scene: THREE.Scene, private sizeRef: () => number) {
     this.scene.add(this.pointsGroup);
+  }
+
+  setStyles(opts: { tubeRadiusFactor?: number; pointSizeFactor?: number }) {
+    if (opts.tubeRadiusFactor !== undefined) this.tubeRadiusFactor = opts.tubeRadiusFactor;
+    if (opts.pointSizeFactor !== undefined) this.pointSizeFactor = opts.pointSizeFactor;
   }
 
   update(points: THREE.Vector3[]) {
     this.disposeLine();
     this.clearVisuals();
 
-    const scale = this.sizeRef() * 0.006;
+    const scale = this.sizeRef() * this.pointSizeFactor;
     for (const p of points) {
       const m = new THREE.Mesh(this.sphereGeo, this.sphereMat);
       m.position.copy(p);
@@ -27,7 +34,7 @@ export class LinePreview {
 
     const curve = new THREE.CatmullRomCurve3(points);
     const tubularSegments = Math.max(points.length * 4, 16);
-    const radius = Math.max(this.sizeRef() * 0.003, 0.001);
+    const radius = Math.max(this.sizeRef() * this.tubeRadiusFactor, 0.0005);
     const geometry = new THREE.TubeGeometry(curve, tubularSegments, radius, 8, false);
     this.line = new THREE.Mesh(geometry, this.tubeMat);
     this.scene.add(this.line);
