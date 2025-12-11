@@ -11,9 +11,15 @@ export interface SurfacePoint {
 export interface SegmentLine {
   id: string;
   controlPoints: SurfacePoint[];
+  segments?: Segment[];
 }
 
 export interface SegmentationState {
   lines: SegmentLine[];
   currentLineId?: string;
+}
+
+export interface Segment {
+  id: string;
+  points: SurfacePoint[];
 }

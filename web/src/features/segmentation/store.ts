@@ -28,6 +28,13 @@ export class SegmentationStore {
       this.startLine();
       return this.addControlPoint(sp);
     }
+    if (!line.segments) {
+      line.segments = [];
+    }
+    if (line.segments.length === 0) {
+      line.segments.push({ id: `${line.id}-seg-1`, points: [] });
+    }
+    const segment = line.segments[line.segments.length - 1];
     const point: SurfacePoint =
       sp instanceof THREE.Vector3
         ? { position: sp.clone() }
@@ -39,17 +46,24 @@ export class SegmentationStore {
             vertexIndices: sp.vertexIndices,
           };
     line.controlPoints.push(point);
-    line.pathPositions = new Float32Array(line.controlPoints.flatMap((c) => c.position.toArray()));
+    segment.points.push(point);
   }
 
   undoLast() {
     const line = this.currentLine();
     if (!line) return;
-    line.controlPoints.pop();
+    const point = line.controlPoints.pop();
+    if (line.segments && line.segments.length) {
+      const lastSeg = line.segments[line.segments.length - 1];
+      if (lastSeg.points.length) {
+        lastSeg.points.pop();
+      }
+      if (lastSeg.points.length === 0) {
+        line.segments.pop();
+      }
+    }
     if (line.controlPoints.length === 0) {
       this.removeLine(line.id);
-    } else {
-      line.pathPositions = new Float32Array(line.controlPoints.flatMap((c) => c.position.toArray()));
     }
   }
 
@@ -74,6 +88,35 @@ export class SegmentationStore {
     }
   }
 
+  addSegment(lineId?: string) {
+    let line = lineId ? this.state.lines.find((l) => l.id === lineId) : this.currentLine();
+    if (!line) {
+      const newId = this.startLine();
+      line = this.state.lines.find((l) => l.id === newId);
+    }
+    if (!line) return;
+    if (!line.segments) line.segments = [];
+    const segId = `${line.id}-seg-${(line.segments.length || 0) + 1}`;
+    line.segments.push({ id: segId, points: [] });
+    return segId;
+  }
+
+  updateSegment(lineId: string, segmentId: string, points: SurfacePoint[]) {
+    const line = this.state.lines.find((l) => l.id === lineId);
+    if (!line || !line.segments) return;
+    const seg = line.segments.find((s) => s.id === segmentId);
+    if (!seg) return;
+    seg.points = points.map((p) => ({
+      position: p.position.clone(),
+      faceIndex: p.faceIndex,
+      barycentric: p.barycentric,
+      vertexIndex: p.vertexIndex,
+      vertexIndices: p.vertexIndices,
+    }));
+    // refresh aggregated control points
+    line.controlPoints = line.segments.flatMap((s) => s.points.map((p) => ({ ...p, position: p.position.clone() })));
+  }
+
   toJSON() {
     return {
       lines: this.state.lines.map((l) => ({
@@ -84,6 +127,16 @@ export class SegmentationStore {
           barycentric: c.barycentric,
           vertexIndex: c.vertexIndex,
           vertexIndices: c.vertexIndices,
+        })),
+        segments: l.segments?.map((s) => ({
+          id: s.id,
+          points: s.points.map((p) => ({
+            position: p.position.toArray(),
+            faceIndex: p.faceIndex,
+            barycentric: p.barycentric,
+            vertexIndex: p.vertexIndex,
+            vertexIndices: p.vertexIndices,
+          })),
         })),
       })),
     };

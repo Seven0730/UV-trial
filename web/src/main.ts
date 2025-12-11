@@ -62,6 +62,7 @@ const store = new SegmentationStore();
 addTestBox();
 resizeRenderer(three);
 const stopLoop = startRenderLoop(three);
+void loadFromURL(DEFAULT_OBJ_URL).catch((err) => setStatus(`默认模型加载失败: ${(err as Error).message}`));
 
 window.addEventListener("resize", () => resizeRenderer(three));
 
