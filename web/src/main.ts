@@ -27,6 +27,7 @@ app.innerHTML = `
     <button id="exportJson">导出 JSON</button>
     <label style="margin-left:12px;">线粗<input id="lineWidth" type="range" min="0.001" max="0.02" step="0.001" value="0.003" style="vertical-align:middle;" /></label>
     <label style="margin-left:8px;">点粗<input id="pointSize" type="range" min="0.002" max="0.02" step="0.001" value="0.006" style="vertical-align:middle;" /></label>
+    <label style="margin-left:8px; font-size:12px; color: var(--muted);"><input id="showPoints" type="checkbox" /> 显示路径点</label>
     <div id="progress" style="color: var(--muted); font-size: 12px;">idle</div>
   </div>
   <div class="main">
@@ -52,6 +53,7 @@ const undoPointBtn = document.querySelector<HTMLButtonElement>("#undoPoint")!;
 const exportJsonBtn = document.querySelector<HTMLButtonElement>("#exportJson")!;
 const lineWidthInput = document.querySelector<HTMLInputElement>("#lineWidth") as HTMLInputElement | null;
 const pointSizeInput = document.querySelector<HTMLInputElement>("#pointSize") as HTMLInputElement | null;
+const showPointsInput = document.querySelector<HTMLInputElement>("#showPoints") as HTMLInputElement | null;
 const lineInfoBox = document.querySelector<HTMLDivElement>("#lineInfo")!;
 
 const three = createThree(canvas);
@@ -92,6 +94,11 @@ lineWidthInput?.addEventListener("input", () => {
 pointSizeInput?.addEventListener("input", () => {
   const val = parseFloat(pointSizeInput.value);
   linePreview.setStyles({ pointSizeFactor: val });
+  rebuildPreview();
+});
+
+showPointsInput?.addEventListener("change", () => {
+  linePreview.setStyles({ showPoints: !!showPointsInput.checked });
   rebuildPreview();
 });
 

@@ -8,26 +8,30 @@ export class LinePreview {
   private tubeMat = new THREE.MeshStandardMaterial({ color: 0xff5c5c, emissive: 0x111111 });
   private tubeRadiusFactor = 0.003;
   private pointSizeFactor = 0.006;
+  private showPoints = false;
 
   constructor(private scene: THREE.Scene, private sizeRef: () => number) {
     this.scene.add(this.pointsGroup);
   }
 
-  setStyles(opts: { tubeRadiusFactor?: number; pointSizeFactor?: number }) {
+  setStyles(opts: { tubeRadiusFactor?: number; pointSizeFactor?: number; showPoints?: boolean }) {
     if (opts.tubeRadiusFactor !== undefined) this.tubeRadiusFactor = opts.tubeRadiusFactor;
     if (opts.pointSizeFactor !== undefined) this.pointSizeFactor = opts.pointSizeFactor;
+    if (opts.showPoints !== undefined) this.showPoints = opts.showPoints;
   }
 
   update(points: THREE.Vector3[]) {
     this.disposeLine();
     this.clearVisuals();
 
-    const scale = this.sizeRef() * this.pointSizeFactor;
-    for (const p of points) {
-      const m = new THREE.Mesh(this.sphereGeo, this.sphereMat);
-      m.position.copy(p);
-      m.scale.setScalar(scale || 0.01);
-      this.pointsGroup.add(m);
+    if (this.showPoints) {
+      const scale = this.sizeRef() * this.pointSizeFactor;
+      for (const p of points) {
+        const m = new THREE.Mesh(this.sphereGeo, this.sphereMat);
+        m.position.copy(p);
+        m.scale.setScalar(scale || 0.01);
+        this.pointsGroup.add(m);
+      }
     }
 
     if (points.length < 2) return;
