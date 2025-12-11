@@ -17,6 +17,13 @@ export class SegmentationStore {
     this.state.currentLineId = undefined;
   }
 
+  setCurrentLine(lineId: string) {
+    const line = this.state.lines.find((l) => l.id === lineId);
+    if (line) {
+      this.state.currentLineId = lineId;
+    }
+  }
+
   clear() {
     this.state = { lines: [] };
     this.nextId = 1;

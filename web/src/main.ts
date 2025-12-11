@@ -24,6 +24,7 @@ app.innerHTML = `
     <button id="startLine">新建线</button>
     <button id="finishLine">结束线</button>
     <button id="undoPoint">撤销一点</button>
+    <button id="deleteLine">删除当前线</button>
     <button id="exportJson">导出 JSON</button>
     <label style="margin-left:12px;">线粗<input id="lineWidth" type="range" min="0.001" max="0.02" step="0.001" value="0.003" style="vertical-align:middle;" /></label>
     <label style="margin-left:8px;">点粗<input id="pointSize" type="range" min="0.002" max="0.02" step="0.001" value="0.006" style="vertical-align:middle;" /></label>
@@ -39,6 +40,10 @@ app.innerHTML = `
   </div>
   <div class="main">
     <canvas id="viewport"></canvas>
+    <div class="sidepanel" id="lineList" style="position:absolute; right:12px; top:12px; width:220px; max-height:80vh; overflow:auto; background:rgba(20,24,30,0.9); border:1px solid #2a2f3a; border-radius:8px; padding:8px; font-size:12px; color:var(--muted); pointer-events:auto; z-index:5;">
+      <div style="font-weight:600; margin-bottom:6px;">线列表</div>
+      <div id="lineListBody">暂无线条</div>
+    </div>
     <div class="status" id="status">准备就绪</div>
     <div class="overlay">
       <strong>模式切换</strong> 划线模式：Shift+单击添加点；微调模式：单击拖动已有点，在表面滑动。<br/><br/>
@@ -58,12 +63,14 @@ const defaultButton = document.querySelector<HTMLButtonElement>("#loadDefault")!
 const startLineBtn = document.querySelector<HTMLButtonElement>("#startLine")!;
 const finishLineBtn = document.querySelector<HTMLButtonElement>("#finishLine")!;
 const undoPointBtn = document.querySelector<HTMLButtonElement>("#undoPoint")!;
+const deleteLineBtn = document.querySelector<HTMLButtonElement>("#deleteLine")!;
 const exportJsonBtn = document.querySelector<HTMLButtonElement>("#exportJson")!;
 const lineWidthInput = document.querySelector<HTMLInputElement>("#lineWidth") as HTMLInputElement | null;
 const pointSizeInput = document.querySelector<HTMLInputElement>("#pointSize") as HTMLInputElement | null;
 const showPointsInput = document.querySelector<HTMLInputElement>("#showPoints") as HTMLInputElement | null;
 const modeSelect = document.querySelector<HTMLSelectElement>("#modeSelect");
 const lineInfoBox = document.querySelector<HTMLDivElement>("#lineInfo")!;
+const lineListBody = document.querySelector<HTMLDivElement>("#lineListBody")!;
 
 const three = createThree(canvas);
 setupLights(three.scene);
@@ -143,6 +150,18 @@ undoPointBtn.addEventListener("click", () => {
   updateLineInfo();
 });
 
+deleteLineBtn.addEventListener("click", () => {
+  const current = store.currentLine();
+  if (!current) {
+    setStatus("没有当前线可删除");
+    return;
+  }
+  store.removeLine(current.id);
+  linePreview.clear();
+  updateLineInfo();
+  setStatus(`已删除 ${current.id}`);
+});
+
 exportJsonBtn.addEventListener("click", () => {
   const json = JSON.stringify(store.toJSON(), null, 2);
   const blob = new Blob([json], { type: "application/json" });
@@ -182,7 +201,8 @@ canvas.addEventListener("pointerdown", async (event) => {
     vertexIndices: hit.vertexIndices,
     vertexIndex,
   });
-  await appendPathUsingGraph(hit);
+  // After adding a control point, recompute the entire path to ensure consistency
+  recomputePathFromControlPoints();
 
   const currentCount = store.getCurrentPoints().length;
   setStatus(`当前线点数: ${currentCount} | face #${hit.faceIndex} bary=(${hit.barycentric
@@ -565,7 +585,46 @@ function updateLineInfo() {
   const lines = store.getLines();
   const current = store.currentLine();
   lineInfoBox.textContent = `lines: ${lines.length}${current ? ` | 当前: ${current.id}` : ""}`;
+  renderLineList(lines, current?.id);
 }
 
 // Keep eslint/TS happy until we implement cleanup hooks.
 void stopLoop;
+
+function renderLineList(lines: ReturnType<SegmentationStore["getLines"]>, currentId?: string) {
+  if (!lineListBody) return;
+  if (!lines.length) {
+    lineListBody.innerHTML = `<div style="color: var(--muted);">暂无线条</div>`;
+    return;
+  }
+
+  lineListBody.innerHTML = lines
+    .map((line) => {
+      const pts = line.controlPoints.length;
+      const segs = line.segments?.length ?? 1;
+      const active = line.id === currentId;
+      const bg = active ? "rgba(76,149,255,0.08)" : "rgba(255,255,255,0.03)";
+      const border = active ? "rgba(76,149,255,0.3)" : "rgba(255,255,255,0.05)";
+      return `
+        <div data-line-id="${line.id}" style="cursor:pointer; padding:6px; margin-bottom:6px; border:1px solid ${border}; border-radius:6px; background:${bg};">
+          <div style="font-weight:600;">${line.id}${active ? " (当前)" : ""}</div>
+          <div style="font-size:11px; color: var(--muted);">点: ${pts} | 段: ${segs}</div>
+        </div>
+      `;
+    })
+    .join("");
+
+  // Add click handlers after HTML is set
+  Array.from(lineListBody.querySelectorAll("[data-line-id]")).forEach((el) => {
+    el.addEventListener("click", () => {
+      const id = (el as HTMLElement).dataset.lineId;
+      if (id) {
+        console.log(`Switching to line: ${id}`); // Debug log
+        store.setCurrentLine(id);
+        rebuildPreview();
+        updateLineInfo();
+        setStatus(`已选中 ${id}`);
+      }
+    });
+  });
+}
