@@ -99,7 +99,7 @@ body {
 
 .overlay {
   position: absolute;
-  right: 16px;
+  left: 16px;
   top: 16px;
   padding: 12px;
   background: rgba(0, 0, 0, 0.45);
@@ -107,7 +107,8 @@ body {
   border-radius: 12px;
   font-size: 12px;
   color: var(--muted);
-  width: 220px;
+  max-width: 280px;
+  pointer-events: none;
 }
 
 .overlay strong {

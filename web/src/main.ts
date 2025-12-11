@@ -40,8 +40,8 @@ app.innerHTML = `
   </div>
   <div class="main">
     <canvas id="viewport"></canvas>
-    <div class="sidepanel" id="lineList" style="position:absolute; right:12px; top:12px; width:220px; max-height:80vh; overflow:auto; background:rgba(20,24,30,0.9); border:1px solid #2a2f3a; border-radius:8px; padding:8px; font-size:12px; color:var(--muted); pointer-events:auto; z-index:5;">
-      <div style="font-weight:600; margin-bottom:6px;">线列表</div>
+    <div class="sidepanel" id="lineList" style="position:absolute; right:16px; top:16px; width:240px; max-height:calc(100vh - 100px); overflow-y:auto; background:rgba(20,24,30,0.95); border:1px solid #2a2f3a; border-radius:8px; padding:12px; font-size:12px; color:var(--muted); pointer-events:auto; z-index:10;">
+      <div style="font-weight:600; margin-bottom:10px; color:#fff; font-size:13px;">线列表</div>
       <div id="lineListBody">暂无线条</div>
     </div>
     <div class="status" id="status">准备就绪</div>
