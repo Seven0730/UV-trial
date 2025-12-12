@@ -83,6 +83,7 @@ const linePreview = new LinePreview(three.scene, () => boundingSize);
 const store = new SegmentationStore();
 let meshGraph: MeshGraphBuilder | null = null;
 let draggingTarget: { kind: "control"; index: number } | { kind: "path"; index: number } | null = null;
+let activePathDragControlIndex: number | null = null;
 type InteractionMode = "draw" | "edit";
 let mode: InteractionMode = "draw";
 
@@ -180,8 +181,65 @@ canvas.addEventListener("pointerdown", async (event) => {
     if (hit) {
       const target = findNearestEditablePoint(hit.point);
       if (target) {
-        draggingTarget = target;
-        setStatus(target.kind === "control" ? `拖动控制点 #${target.index + 1}` : `拖动路径点 #${target.index + 1}`);
+        const line = store.currentLine();
+        if (target.kind === "path" && line && meshGraph && line.pathVertices?.length) {
+          const pathIndex = target.index;
+          const oldVertex = line.pathVertices[pathIndex];
+          const directCpIndex = line.controlPoints.findIndex((cp) => cp.vertexIndex === oldVertex);
+          if (directCpIndex !== -1) {
+            activePathDragControlIndex = directCpIndex;
+            draggingTarget = { kind: "control", index: directCpIndex };
+            setStatus(`拖动控制点 #${directCpIndex + 1}`);
+          } else {
+            // Insert a new control point once at drag start.
+            const controlPathIndices: Array<{ cpIndex: number; pathIndex: number }> = [];
+            for (let i = 0; i < line.controlPoints.length; i++) {
+              const v = line.controlPoints[i].vertexIndex;
+              if (v === undefined) continue;
+              const pi = line.pathVertices.indexOf(v);
+              if (pi !== -1) controlPathIndices.push({ cpIndex: i, pathIndex: pi });
+            }
+            controlPathIndices.sort((a, b) => a.pathIndex - b.pathIndex);
+
+            let insertAt = line.controlPoints.length;
+            for (let i = controlPathIndices.length - 1; i >= 0; i--) {
+              if (controlPathIndices[i].pathIndex < pathIndex) {
+                insertAt = controlPathIndices[i].cpIndex + 1;
+                break;
+              }
+            }
+            if (controlPathIndices.length && controlPathIndices[0].pathIndex > pathIndex) {
+              insertAt = controlPathIndices[0].cpIndex;
+            }
+
+            line.controlPoints.splice(insertAt, 0, {
+              position: line.pathPositions
+                ? new THREE.Vector3(
+                    line.pathPositions[pathIndex * 3],
+                    line.pathPositions[pathIndex * 3 + 1],
+                    line.pathPositions[pathIndex * 3 + 2],
+                  )
+                : hit.point.clone(),
+              vertexIndex: oldVertex,
+            });
+            if (line.segments) {
+              line.segments = [
+                {
+                  id: `${line.id}-seg-1`,
+                  points: line.controlPoints.map((p) => ({ ...p, position: p.position.clone() })),
+                },
+              ];
+            }
+            recomputePathFromControlPoints();
+            activePathDragControlIndex = insertAt;
+            draggingTarget = { kind: "control", index: insertAt };
+            setStatus(`拖动控制点 #${insertAt + 1} (新插入)`);
+          }
+        } else {
+          activePathDragControlIndex = null;
+          draggingTarget = target;
+          setStatus(target.kind === "control" ? `拖动控制点 #${target.index + 1}` : `拖动路径点 #${target.index + 1}`);
+        }
         three.controls.enableRotate = false;
         return;
       }
@@ -234,10 +292,12 @@ canvas.addEventListener("pointermove", (event) => {
 
 canvas.addEventListener("pointerup", () => {
   draggingTarget = null;
+  activePathDragControlIndex = null;
   three.controls.enableRotate = mode !== "edit";
 });
 canvas.addEventListener("pointerleave", () => {
   draggingTarget = null;
+  activePathDragControlIndex = null;
   three.controls.enableRotate = mode !== "edit";
 });
 
@@ -537,20 +597,44 @@ function updatePathVertex(pathIndex: number, newVertex: number) {
   if (pathIndex < 0 || pathIndex >= line.pathVertices.length) return;
   const pos = meshGraph.getPosition(newVertex);
   if (!pos) return;
+  const prevVertex = pathIndex > 0 ? line.pathVertices[pathIndex - 1] : null;
+  const nextVertex = pathIndex < line.pathVertices.length - 1 ? line.pathVertices[pathIndex + 1] : null;
 
-  const verts = [...line.pathVertices];
-  verts[pathIndex] = newVertex;
-  const positions = new Float32Array(line.pathPositions);
-  positions[pathIndex * 3] = pos.x;
-  positions[pathIndex * 3 + 1] = pos.y;
-  positions[pathIndex * 3 + 2] = pos.z;
+  const leftPath = prevVertex !== null ? meshGraph.shortestPath(prevVertex, newVertex) : [newVertex];
+  const rightPath = nextVertex !== null ? meshGraph.shortestPath(newVertex, nextVertex) : [newVertex];
 
-  store.setPathData(line.id, { pathVertices: verts, pathPositions: positions });
-
-  const pts: THREE.Vector3[] = [];
-  for (let i = 0; i < positions.length; i += 3) {
-    pts.push(new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]));
+  if ((prevVertex !== null && leftPath.length === 0) || (nextVertex !== null && rightPath.length === 0)) {
+    const verts = [...line.pathVertices];
+    verts[pathIndex] = newVertex;
+    const positions = new Float32Array(line.pathPositions);
+    positions[pathIndex * 3] = pos.x;
+    positions[pathIndex * 3 + 1] = pos.y;
+    positions[pathIndex * 3 + 2] = pos.z;
+    store.setPathData(line.id, { pathVertices: verts, pathPositions: positions });
+    const pts: THREE.Vector3[] = [];
+    for (let i = 0; i < positions.length; i += 3) {
+      pts.push(new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]));
+    }
+    linePreview.update(pts);
+    return;
   }
+
+  const prefix = line.pathVertices.slice(0, pathIndex);
+  const suffix = nextVertex !== null ? line.pathVertices.slice(pathIndex + 2) : [];
+  const leftSegment = prevVertex !== null ? leftPath.slice(1) : leftPath;
+  const rightSegment = nextVertex !== null ? rightPath.slice(1) : [];
+  const verts = [...prefix, ...leftSegment, ...rightSegment, ...suffix];
+
+  const positions: number[] = [];
+  const pts: THREE.Vector3[] = [];
+  for (const v of verts) {
+    const p = meshGraph.getPosition(v);
+    if (!p) continue;
+    positions.push(p.x, p.y, p.z);
+    pts.push(p.clone());
+  }
+
+  store.setPathData(line.id, { pathVertices: verts, pathPositions: new Float32Array(positions) });
   linePreview.update(pts);
 }
 
