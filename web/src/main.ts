@@ -39,6 +39,7 @@ app.innerHTML = `
           <button id="loadDefault" class="tool-btn">加载默认 OBJ</button>
           <label for="meshFile" class="tool-btn">导入 OBJ 文件<input id="meshFile" type="file" accept=".obj" /></label>
           <button id="exportJson" class="tool-btn">导出 JSON</button>
+          <button id="exportObj" class="tool-btn">导出 OBJ (含分割线)</button>
         </div>
         
         <!-- 绘制工具组 -->
@@ -117,6 +118,7 @@ const undoPointBtn = document.querySelector<HTMLButtonElement>("#undoPoint")!;
 const redoPointBtn = document.querySelector<HTMLButtonElement>("#redoPoint")!;
 const deleteLineBtn = document.querySelector<HTMLButtonElement>("#deleteLine")!;
 const exportJsonBtn = document.querySelector<HTMLButtonElement>("#exportJson")!;
+const exportObjBtn = document.querySelector<HTMLButtonElement>("#exportObj")!;
 const lineWidthInput = document.querySelector<HTMLInputElement>("#lineWidth") as HTMLInputElement | null;
 const pointSizeInput = document.querySelector<HTMLInputElement>("#pointSize") as HTMLInputElement | null;
 const showPointsInput = document.querySelector<HTMLInputElement>("#showPoints") as HTMLInputElement | null;
@@ -281,6 +283,25 @@ exportJsonBtn.addEventListener("click", () => {
   a.click();
   URL.revokeObjectURL(url);
   setStatus("已导出 segmentation.json");
+});
+
+exportObjBtn.addEventListener("click", () => {
+  const objContent = exportMeshWithLines();
+  if (!objContent) {
+    setStatus("无模型或分割线可导出");
+    return;
+  }
+  
+  // 只导出OBJ文件（包含颜色信息）
+  const objBlob = new Blob([objContent], { type: "text/plain" });
+  const objUrl = URL.createObjectURL(objBlob);
+  const objLink = document.createElement("a");
+  objLink.href = objUrl;
+  objLink.download = "model_with_segmentation.obj";
+  objLink.click();
+  URL.revokeObjectURL(objUrl);
+  
+  setStatus("已导出 OBJ 文件（含颜色）");
 });
 
 canvas.addEventListener("pointerdown", async (event) => {
@@ -843,4 +864,126 @@ function renderLineList(lines: ReturnType<SegmentationStore["getLines"]>, curren
       }
     });
   });
+}
+
+function exportMeshWithLines(): string | null {
+  // 获取原始网格数据
+  let mesh: THREE.Mesh | null = null;
+  modelRoot.traverse((child) => {
+    if ((child as THREE.Mesh).isMesh && !mesh) {
+      mesh = child as THREE.Mesh;
+    }
+  });
+
+  if (!mesh || !meshGraph) return null;
+
+  const geometry = mesh.geometry as THREE.BufferGeometry;
+  const position = geometry.getAttribute("position");
+  const normal = geometry.getAttribute("normal");
+  const index = geometry.index;
+
+  if (!position) return null;
+
+  // 获取原始材质颜色
+  let meshColor = { r: 0.827, g: 0.843, b: 0.867 }; // 默认颜色
+  const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+  if (material && (material as any).color) {
+    const color = (material as any).color as THREE.Color;
+    meshColor = { r: color.r, g: color.g, b: color.b };
+  }
+
+  let objContent = "# OBJ Export with Segmentation Lines and Colors\n";
+  objContent += `# Generated: ${new Date().toISOString()}\n`;
+  objContent += `# Vertices: ${position.count}\n`;
+  objContent += `# Faces: ${index ? index.count / 3 : position.count / 3}\n`;
+  objContent += "# Vertex format: v x y z r g b (color embedded)\n\n";
+
+  // 导出所有顶点（带颜色）
+  objContent += "# Mesh Vertices (with color)\n";
+  for (let i = 0; i < position.count; i++) {
+    const x = position.getX(i);
+    const y = position.getY(i);
+    const z = position.getZ(i);
+    objContent += `v ${x.toFixed(6)} ${y.toFixed(6)} ${z.toFixed(6)} ${meshColor.r.toFixed(3)} ${meshColor.g.toFixed(3)} ${meshColor.b.toFixed(3)}\n`;
+  }
+  objContent += "\n";
+
+  // 导出法向量（如果有）
+  if (normal) {
+    objContent += "# Vertex Normals\n";
+    for (let i = 0; i < normal.count; i++) {
+      const nx = normal.getX(i);
+      const ny = normal.getY(i);
+      const nz = normal.getZ(i);
+      objContent += `vn ${nx.toFixed(6)} ${ny.toFixed(6)} ${nz.toFixed(6)}\n`;
+    }
+    objContent += "\n";
+  }
+
+  // 导出面
+  objContent += "# Mesh Faces\n";
+  objContent += "g mesh\n";
+  
+  if (index) {
+    const faceCount = index.count / 3;
+    for (let i = 0; i < faceCount; i++) {
+      const a = index.getX(i * 3) + 1;
+      const b = index.getX(i * 3 + 1) + 1;
+      const c = index.getX(i * 3 + 2) + 1;
+      
+      if (normal) {
+        objContent += `f ${a}//${a} ${b}//${b} ${c}//${c}\n`;
+      } else {
+        objContent += `f ${a} ${b} ${c}\n`;
+      }
+    }
+  } else {
+    const faceCount = position.count / 3;
+    for (let i = 0; i < faceCount; i++) {
+      const a = i * 3 + 1;
+      const b = i * 3 + 2;
+      const c = i * 3 + 3;
+      
+      if (normal) {
+        objContent += `f ${a}//${a} ${b}//${b} ${c}//${c}\n`;
+      } else {
+        objContent += `f ${a} ${b} ${c}\n`;
+      }
+    }
+  }
+  objContent += "\n";
+
+  // 导出分割线（红色顶点）
+  const lines = store.getLines();
+  if (lines.length > 0 && meshGraph) {
+    objContent += "# Segmentation Lines (red color)\n";
+    
+    let lineVertexOffset = position.count + 1;
+    
+    lines.forEach((line, lineIdx) => {
+      if (!line.pathVertices || line.pathVertices.length < 2) return;
+      
+      objContent += `# Line: ${line.id}\n`;
+      objContent += `g line_${lineIdx + 1}\n`;
+      
+      // 为这条线导出新的顶点（红色）
+      const lineVertices: number[] = [];
+      for (const vertexIdx of line.pathVertices) {
+        const pos = meshGraph.getPosition(vertexIdx);
+        if (pos) {
+          // 红色顶点
+          objContent += `v ${pos.x.toFixed(6)} ${pos.y.toFixed(6)} ${pos.z.toFixed(6)} 1.000 0.000 0.000\n`;
+          lineVertices.push(lineVertexOffset++);
+        }
+      }
+      
+      // 导出线段
+      for (let i = 0; i < lineVertices.length - 1; i++) {
+        objContent += `l ${lineVertices[i]} ${lineVertices[i + 1]}\n`;
+      }
+      objContent += "\n";
+    });
+  }
+
+  return objContent;
 }

@@ -290,6 +290,29 @@ export class SegmentationStore {
 
   toJSON() {
     return {
+      version: "1.0",
+      timestamp: new Date().toISOString(),
+      coordinateSystem: {
+        description: "Three.js world space coordinates (centered and scaled model)",
+        note: "Model is automatically centered at origin and scaled to fit viewport. Coordinates are after transformation.",
+      },
+      lines: this.state.lines.map((l) => ({
+        id: l.id,
+        controlPoints: l.controlPoints.map((c) => ({
+          position: c.position.toArray(), // [x, y, z] in world space
+          vertexIndex: c.vertexIndex, // Index in mesh geometry
+        })),
+        // Path vertex indices (can reconstruct full path from mesh)
+        pathVertices: l.pathVertices,
+      })),
+    };
+  }
+
+  // 导出详细格式（包含所有数据）
+  toDetailedJSON() {
+    return {
+      version: "1.0-detailed",
+      timestamp: new Date().toISOString(),
       lines: this.state.lines.map((l) => ({
         id: l.id,
         controlPoints: l.controlPoints.map((c) => ({
