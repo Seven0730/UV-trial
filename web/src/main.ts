@@ -203,7 +203,7 @@ finishLineBtn.addEventListener("click", () => {
 
 undoPointBtn.addEventListener("click", () => {
   store.undoLast();
-  linePreview.update(store.getCurrentPoints());
+  recomputePathFromControlPoints();
   setStatus("撤销一点");
   updateLineInfo();
 });
