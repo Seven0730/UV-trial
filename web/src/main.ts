@@ -17,41 +17,89 @@ if (!app) {
 }
 
 app.innerHTML = `
-  <div class="toolbar">
-    <h1>Segmentation Viewer</h1>
-    <button id="loadDefault">加载默认 OBJ</button>
-    <label for="meshFile">导入 OBJ<input id="meshFile" type="file" accept=".obj" /></label>
-    <button id="startLine">新建线</button>
-    <button id="finishLine">结束线</button>
-    <button id="undoPoint">撤销一点</button>
-    <button id="deleteLine">删除当前线</button>
-    <button id="exportJson">导出 JSON</button>
-    <label style="margin-left:12px;">线粗<input id="lineWidth" type="range" min="0.001" max="0.02" step="0.001" value="0.003" style="vertical-align:middle;" /></label>
-    <label style="margin-left:8px;">点粗<input id="pointSize" type="range" min="0.002" max="0.02" step="0.001" value="0.006" style="vertical-align:middle;" /></label>
-    <label style="margin-left:8px; font-size:12px; color: var(--muted);"><input id="showPoints" type="checkbox" /> 显示路径点</label>
-    <label style="margin-left:8px; font-size:12px; color: var(--muted);">
-      模式
-      <select id="modeSelect" style="vertical-align:middle;">
-        <option value="draw" selected>划线模式</option>
-        <option value="edit">微调模式</option>
-      </select>
-    </label>
-    <div id="progress" style="color: var(--muted); font-size: 12px;">idle</div>
-  </div>
   <div class="main">
     <canvas id="viewport"></canvas>
-    <div class="sidepanel" id="lineList" style="position:absolute; right:16px; top:16px; width:240px; max-height:calc(100vh - 100px); overflow-y:auto; background:rgba(20,24,30,0.95); border:1px solid #2a2f3a; border-radius:8px; padding:12px; font-size:12px; color:var(--muted); pointer-events:auto; z-index:10;">
-      <div style="font-weight:600; margin-bottom:10px; color:#fff; font-size:13px;">线列表</div>
-      <div id="lineListBody">暂无线条</div>
+    
+    <!-- 左侧工具栏 -->
+    <div class="sidebar" id="sidebar">
+      <div class="sidebar-toggle" id="sidebarToggle">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M5 3l6 5-6 5V3z"/>
+        </svg>
+      </div>
+      
+      <div class="sidebar-content" id="sidebarContent">
+        <div class="sidebar-header">
+          <h1>Segmentation Viewer</h1>
+        </div>
+        
+        <!-- 文件操作组 -->
+        <div class="tool-group">
+          <div class="group-title">文件操作</div>
+          <button id="loadDefault" class="tool-btn">加载默认 OBJ</button>
+          <label for="meshFile" class="tool-btn">导入 OBJ 文件<input id="meshFile" type="file" accept=".obj" /></label>
+          <button id="exportJson" class="tool-btn">导出 JSON</button>
+        </div>
+        
+        <!-- 绘制工具组 -->
+        <div class="tool-group">
+          <div class="group-title">绘制工具</div>
+          <button id="startLine" class="tool-btn">新建线</button>
+          <button id="finishLine" class="tool-btn">结束当前线</button>
+          <button id="undoPoint" class="tool-btn">撤销最后一点</button>
+          <button id="deleteLine" class="tool-btn danger">删除当前线</button>
+        </div>
+        
+        <!-- 显示设置组 -->
+        <div class="tool-group">
+          <div class="group-title">显示设置</div>
+          <div class="tool-control">
+            <label>线粗细</label>
+            <input id="lineWidth" type="range" min="0.001" max="0.02" step="0.001" value="0.003" />
+          </div>
+          <div class="tool-control">
+            <label>点大小</label>
+            <input id="pointSize" type="range" min="0.002" max="0.02" step="0.001" value="0.006" />
+          </div>
+          <label class="tool-checkbox">
+            <input id="showPoints" type="checkbox" />
+            <span>显示路径点</span>
+          </label>
+        </div>
+        
+        <!-- 操作模式组 -->
+        <div class="tool-group">
+          <div class="group-title">操作模式</div>
+          <select id="modeSelect" class="tool-select">
+            <option value="draw" selected>划线模式</option>
+            <option value="edit">微调模式</option>
+          </select>
+        </div>
+        
+        <!-- 状态信息 -->
+        <div class="tool-group">
+          <div id="progress" class="progress-text">idle</div>
+        </div>
+      </div>
     </div>
+    
+    <!-- 右侧线列表 -->
+    <div class="line-list-panel" id="lineList">
+      <div class="panel-header">线列表</div>
+      <div id="lineListBody" class="line-list-body">暂无线条</div>
+    </div>
+    
+    <!-- 状态栏 -->
     <div class="status" id="status">准备就绪</div>
-    <div class="overlay">
+    <div class="status bottom-right" id="lineInfo">lines: 0</div>
+    
+    <!-- 使用说明 -->
+    <div class="help-overlay" id="helpOverlay">
       <strong>模式切换</strong> 划线模式：Shift+单击添加点；微调模式：单击拖动已有点，在表面滑动。<br/><br/>
       <strong>路径</strong> 依网格边最短路生成，默认隐藏路径点，可通过复选框显示；线/点粗细可调。<br/><br/>
       <strong>拖拽/点击导入 OBJ</strong>，默认加载 <code>test_large.obj</code>。<br/><br/>
       当前线数量显示在右下角。
     </div>
-    <div class="status bottom-right" id="lineInfo">lines: 0</div>
   </div>
 `;
 
@@ -71,6 +119,15 @@ const showPointsInput = document.querySelector<HTMLInputElement>("#showPoints") 
 const modeSelect = document.querySelector<HTMLSelectElement>("#modeSelect");
 const lineInfoBox = document.querySelector<HTMLDivElement>("#lineInfo")!;
 const lineListBody = document.querySelector<HTMLDivElement>("#lineListBody")!;
+const sidebar = document.querySelector<HTMLDivElement>("#sidebar")!;
+const sidebarToggle = document.querySelector<HTMLDivElement>("#sidebarToggle")!;
+
+// 侧边栏折叠控制
+let sidebarCollapsed = false;
+sidebarToggle.addEventListener("click", () => {
+  sidebarCollapsed = !sidebarCollapsed;
+  sidebar.classList.toggle("collapsed", sidebarCollapsed);
+});
 
 const three = createThree(canvas);
 setupLights(three.scene);
