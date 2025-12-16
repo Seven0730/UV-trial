@@ -1,20 +1,146 @@
 import * as THREE from "three";
 import { SegmentLine, SurfacePoint, SegmentationState } from "./types";
 
+interface HistoryEntry {
+  state: string; // JSON serialized state
+  currentLineId?: string;
+}
+
 export class SegmentationStore {
   private state: SegmentationState = { lines: [] };
   private nextId = 1;
+  private history: HistoryEntry[] = [];
+  private historyIndex = -1;
+  private maxHistorySize = 50;
+
+  constructor() {
+    // 保存初始空状态到历史
+    this.saveHistory();
+  }
+
+  private saveHistory() {
+    // Remove all redo entries when making a new change
+    this.history = this.history.slice(0, this.historyIndex + 1);
+    
+    // Save current state
+    const entry: HistoryEntry = {
+      state: JSON.stringify(this.serializeState()),
+      currentLineId: this.state.currentLineId,
+    };
+    
+    this.history.push(entry);
+    
+    // Limit history size
+    if (this.history.length > this.maxHistorySize) {
+      this.history.shift();
+    } else {
+      this.historyIndex++;
+    }
+  }
+
+  // 公开方法，用于手动保存历史快照
+  saveHistorySnapshot() {
+    this.saveHistory();
+  }
+
+  private serializeState() {
+    return {
+      lines: this.state.lines.map((l) => ({
+        id: l.id,
+        controlPoints: l.controlPoints.map((c) => ({
+          position: c.position.toArray(),
+          faceIndex: c.faceIndex,
+          barycentric: c.barycentric,
+          vertexIndex: c.vertexIndex,
+          vertexIndices: c.vertexIndices,
+        })),
+        pathVertices: l.pathVertices,
+        pathPositions: l.pathPositions ? Array.from(l.pathPositions) : undefined,
+        segments: l.segments?.map((s) => ({
+          id: s.id,
+          points: s.points.map((p) => ({
+            position: p.position.toArray(),
+            faceIndex: p.faceIndex,
+            barycentric: p.barycentric,
+            vertexIndex: p.vertexIndex,
+            vertexIndices: p.vertexIndices,
+          })),
+        })),
+      })),
+    };
+  }
+
+  private deserializeState(data: any) {
+    return {
+      lines: data.lines.map((l: any) => ({
+        id: l.id,
+        controlPoints: l.controlPoints.map((c: any) => ({
+          position: new THREE.Vector3().fromArray(c.position),
+          faceIndex: c.faceIndex,
+          barycentric: c.barycentric,
+          vertexIndex: c.vertexIndex,
+          vertexIndices: c.vertexIndices,
+        })),
+        pathVertices: l.pathVertices,
+        pathPositions: l.pathPositions ? new Float32Array(l.pathPositions) : undefined,
+        segments: l.segments?.map((s: any) => ({
+          id: s.id,
+          points: s.points.map((p: any) => ({
+            position: new THREE.Vector3().fromArray(p.position),
+            faceIndex: p.faceIndex,
+            barycentric: p.barycentric,
+            vertexIndex: p.vertexIndex,
+            vertexIndices: p.vertexIndices,
+          })),
+        })),
+      })),
+    };
+  }
+
+  canUndo(): boolean {
+    return this.historyIndex > 0;
+  }
+
+  canRedo(): boolean {
+    return this.historyIndex < this.history.length - 1;
+  }
+
+  undo(): boolean {
+    if (!this.canUndo()) return false;
+    
+    this.historyIndex--;
+    const entry = this.history[this.historyIndex];
+    const savedState = JSON.parse(entry.state);
+    this.state.lines = this.deserializeState(savedState).lines;
+    this.state.currentLineId = entry.currentLineId;
+    
+    return true;
+  }
+
+  redo(): boolean {
+    if (!this.canRedo()) return false;
+    
+    this.historyIndex++;
+    const entry = this.history[this.historyIndex];
+    const savedState = JSON.parse(entry.state);
+    this.state.lines = this.deserializeState(savedState).lines;
+    this.state.currentLineId = entry.currentLineId;
+    
+    return true;
+  }
 
   startLine() {
     const id = `line-${this.nextId++}`;
     this.state.currentLineId = id;
     const line: SegmentLine = { id, controlPoints: [] };
     this.state.lines.push(line);
+    this.saveHistory();
     return id;
   }
 
   finishLine() {
     this.state.currentLineId = undefined;
+    this.saveHistory();
   }
 
   setCurrentLine(lineId: string) {
@@ -27,6 +153,8 @@ export class SegmentationStore {
   clear() {
     this.state = { lines: [] };
     this.nextId = 1;
+    this.history = [];
+    this.historyIndex = -1;
   }
 
   addControlPoint(sp: SurfacePoint | THREE.Vector3): void {
@@ -54,9 +182,10 @@ export class SegmentationStore {
           };
     line.controlPoints.push(point);
     segment.points.push(point);
+    this.saveHistory();
   }
 
-  updateControlPoint(index: number, point: SurfacePoint) {
+  updateControlPoint(index: number, point: SurfacePoint, saveToHistory: boolean = true) {
     const line = this.currentLine();
     if (!line) return;
     if (index < 0 || index >= line.controlPoints.length) return;
@@ -77,6 +206,9 @@ export class SegmentationStore {
         }
         offset += seg.points.length;
       }
+    }
+    if (saveToHistory) {
+      this.saveHistory();
     }
   }
 
@@ -124,6 +256,7 @@ export class SegmentationStore {
     if (this.state.currentLineId === id) {
       this.state.currentLineId = undefined;
     }
+    this.saveHistory();
   }
 
   addSegment(lineId?: string) {

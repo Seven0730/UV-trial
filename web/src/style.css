@@ -167,6 +167,12 @@ body {
   color: var(--accent);
 }
 
+.tool-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .tool-btn.danger:hover {
   border-color: var(--accent-strong);
   color: var(--accent-strong);

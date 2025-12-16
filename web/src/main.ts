@@ -46,7 +46,10 @@ app.innerHTML = `
           <div class="group-title">绘制工具</div>
           <button id="startLine" class="tool-btn">新建线</button>
           <button id="finishLine" class="tool-btn">结束当前线</button>
-          <button id="undoPoint" class="tool-btn">撤销最后一点</button>
+          <div style="display: flex; gap: 8px;">
+            <button id="undoPoint" class="tool-btn" style="flex: 1; margin-bottom: 0;" title="撤销 (Ctrl+Z)">↶ 撤销</button>
+            <button id="redoPoint" class="tool-btn" style="flex: 1; margin-bottom: 0;" title="重做 (Ctrl+Y)">↷ 重做</button>
+          </div>
           <button id="deleteLine" class="tool-btn danger">删除当前线</button>
         </div>
         
@@ -96,9 +99,9 @@ app.innerHTML = `
     <!-- 使用说明 -->
     <div class="help-overlay" id="helpOverlay">
       <strong>模式切换</strong> 划线模式：Shift+单击添加点；微调模式：单击拖动已有点，在表面滑动。<br/><br/>
+      <strong>撤销/重做</strong> Ctrl+Z 撤销，Ctrl+Y 或 Ctrl+Shift+Z 重做操作。<br/><br/>
       <strong>路径</strong> 依网格边最短路生成，默认隐藏路径点，可通过复选框显示；线/点粗细可调。<br/><br/>
-      <strong>拖拽/点击导入 OBJ</strong>，默认加载 <code>test_large.obj</code>。<br/><br/>
-      当前线数量显示在右下角。
+      <strong>拖拽/点击导入 OBJ</strong>，默认加载 <code>test_large.obj</code>。
     </div>
   </div>
 `;
@@ -111,6 +114,7 @@ const defaultButton = document.querySelector<HTMLButtonElement>("#loadDefault")!
 const startLineBtn = document.querySelector<HTMLButtonElement>("#startLine")!;
 const finishLineBtn = document.querySelector<HTMLButtonElement>("#finishLine")!;
 const undoPointBtn = document.querySelector<HTMLButtonElement>("#undoPoint")!;
+const redoPointBtn = document.querySelector<HTMLButtonElement>("#redoPoint")!;
 const deleteLineBtn = document.querySelector<HTMLButtonElement>("#deleteLine")!;
 const exportJsonBtn = document.querySelector<HTMLButtonElement>("#exportJson")!;
 const lineWidthInput = document.querySelector<HTMLInputElement>("#lineWidth") as HTMLInputElement | null;
@@ -141,12 +145,14 @@ const store = new SegmentationStore();
 let meshGraph: MeshGraphBuilder | null = null;
 let draggingTarget: { kind: "control"; index: number } | { kind: "path"; index: number } | null = null;
 let activePathDragControlIndex: number | null = null;
+let isDraggingControlPoint = false; // 标记是否正在拖动控制点
 type InteractionMode = "draw" | "edit";
 let mode: InteractionMode = "draw";
 
 addTestBox();
 resizeRenderer(three);
 const stopLoop = startRenderLoop(three);
+updateUndoRedoButtons(); // 初始化按钮状态
 void loadFromURL(DEFAULT_OBJ_URL).catch((err) => setStatus(`默认模型加载失败: ${(err as Error).message}`));
 
 window.addEventListener("resize", () => resizeRenderer(three));
@@ -202,11 +208,56 @@ finishLineBtn.addEventListener("click", () => {
 });
 
 undoPointBtn.addEventListener("click", () => {
-  store.undoLast();
-  recomputePathFromControlPoints();
-  setStatus("撤销一点");
-  updateLineInfo();
+  if (store.undo()) {
+    recomputePathFromControlPoints();
+    setStatus("撤销");
+    updateLineInfo();
+    updateUndoRedoButtons();
+  } else {
+    setStatus("无可撤销的操作");
+  }
 });
+
+redoPointBtn.addEventListener("click", () => {
+  if (store.redo()) {
+    recomputePathFromControlPoints();
+    setStatus("重做");
+    updateLineInfo();
+    updateUndoRedoButtons();
+  } else {
+    setStatus("无可重做的操作");
+  }
+});
+
+// 键盘快捷键
+window.addEventListener("keydown", (event) => {
+  // Ctrl+Z 或 Cmd+Z: 撤销
+  if ((event.ctrlKey || event.metaKey) && event.key === "z" && !event.shiftKey) {
+    event.preventDefault();
+    if (store.undo()) {
+      recomputePathFromControlPoints();
+      setStatus("撤销");
+      updateLineInfo();
+      updateUndoRedoButtons();
+    }
+  }
+  // Ctrl+Y 或 Cmd+Y 或 Ctrl+Shift+Z: 重做
+  if (((event.ctrlKey || event.metaKey) && event.key === "y") || 
+      ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === "z")) {
+    event.preventDefault();
+    if (store.redo()) {
+      recomputePathFromControlPoints();
+      setStatus("重做");
+      updateLineInfo();
+      updateUndoRedoButtons();
+    }
+  }
+});
+
+function updateUndoRedoButtons() {
+  undoPointBtn.disabled = !store.canUndo();
+  redoPointBtn.disabled = !store.canRedo();
+}
 
 deleteLineBtn.addEventListener("click", () => {
   const current = store.currentLine();
@@ -244,10 +295,17 @@ canvas.addEventListener("pointerdown", async (event) => {
           const oldVertex = line.pathVertices[pathIndex];
           const directCpIndex = line.controlPoints.findIndex((cp) => cp.vertexIndex === oldVertex);
           if (directCpIndex !== -1) {
+            // 拖动已有控制点，保存历史
+            store.saveHistorySnapshot();
+            isDraggingControlPoint = true;
             activePathDragControlIndex = directCpIndex;
             draggingTarget = { kind: "control", index: directCpIndex };
             setStatus(`拖动控制点 #${directCpIndex + 1}`);
           } else {
+            // 插入新控制点，保存历史
+            store.saveHistorySnapshot();
+            isDraggingControlPoint = true;
+            
             // Insert a new control point once at drag start.
             const controlPathIndices: Array<{ cpIndex: number; pathIndex: number }> = [];
             for (let i = 0; i < line.controlPoints.length; i++) {
@@ -293,6 +351,9 @@ canvas.addEventListener("pointerdown", async (event) => {
             setStatus(`拖动控制点 #${insertAt + 1} (新插入)`);
           }
         } else {
+          // 拖动已有控制点，保存历史
+          store.saveHistorySnapshot();
+          isDraggingControlPoint = true;
           activePathDragControlIndex = null;
           draggingTarget = target;
           setStatus(target.kind === "control" ? `拖动控制点 #${target.index + 1}` : `拖动路径点 #${target.index + 1}`);
@@ -334,13 +395,14 @@ canvas.addEventListener("pointermove", (event) => {
   if (!hit) return;
   const vertexIndex = selectClosestVertex(hit);
   if (draggingTarget.kind === "control") {
+    // 拖动过程中不保存历史
     store.updateControlPoint(draggingTarget.index, {
       position: hit.point,
       faceIndex: hit.faceIndex,
       barycentric: hit.barycentric,
       vertexIndices: hit.vertexIndices,
       vertexIndex,
-    });
+    }, false);
     recomputePathFromControlPoints();
   } else if (draggingTarget.kind === "path") {
     updatePathVertex(draggingTarget.index, vertexIndex);
@@ -348,11 +410,23 @@ canvas.addEventListener("pointermove", (event) => {
 });
 
 canvas.addEventListener("pointerup", () => {
+  // 拖动结束后保存历史状态
+  if (isDraggingControlPoint) {
+    store.saveHistorySnapshot();
+    updateLineInfo(); // 更新按钮状态
+    isDraggingControlPoint = false;
+  }
   draggingTarget = null;
   activePathDragControlIndex = null;
   three.controls.enableRotate = mode !== "edit";
 });
 canvas.addEventListener("pointerleave", () => {
+  // 拖动意外结束也保存历史
+  if (isDraggingControlPoint) {
+    store.saveHistorySnapshot();
+    updateLineInfo(); // 更新按钮状态
+    isDraggingControlPoint = false;
+  }
   draggingTarget = null;
   activePathDragControlIndex = null;
   three.controls.enableRotate = mode !== "edit";
@@ -727,6 +801,7 @@ function updateLineInfo() {
   const current = store.currentLine();
   lineInfoBox.textContent = `lines: ${lines.length}${current ? ` | 当前: ${current.id}` : ""}`;
   renderLineList(lines, current?.id);
+  updateUndoRedoButtons();
 }
 
 // Keep eslint/TS happy until we implement cleanup hooks.
