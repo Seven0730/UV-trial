@@ -644,12 +644,8 @@ function recomputePathFromControlPoints() {
     return;
   }
 
-  const positions: number[] = [];
   const pathVertices: number[] = [];
-
-  const pushPos = (pos: THREE.Vector3) => {
-    positions.push(pos.x, pos.y, pos.z);
-  };
+  const smoothPositions: THREE.Vector3[] = [];
 
   let currentVertex =
     cps[0].vertexIndex ?? selectClosestVertex({
@@ -660,36 +656,65 @@ function recomputePathFromControlPoints() {
       triangle: [cps[0].position, cps[0].position, cps[0].position],
     } as any);
 
-  const firstPos = meshGraph.getPosition(currentVertex);
-  if (firstPos) {
-    pushPos(firstPos);
-    pathVertices.push(currentVertex);
-  }
+  pathVertices.push(currentVertex);
 
+  // 收集所有控制点对应的顶点
+  const controlVertices: number[] = [currentVertex];
   for (let i = 1; i < cps.length; i++) {
     const targetVertex = cps[i].vertexIndex ?? currentVertex;
-    const segment = meshGraph.shortestPath(currentVertex, targetVertex);
-    if (!segment.length) continue;
-    // append skipping duplicate start
-    for (let j = 1; j < segment.length; j++) {
-      const v = segment[j];
-      const pos = meshGraph.getPosition(v);
-      if (pos) pushPos(pos);
-      pathVertices.push(v);
-    }
+    controlVertices.push(targetVertex);
     currentVertex = targetVertex;
+  }
+
+  // 对每段使用平滑路径
+  for (let i = 0; i < controlVertices.length - 1; i++) {
+    const startV = controlVertices[i];
+    const endV = controlVertices[i + 1];
+    
+    // 使用 A* + 简化 + 平滑
+    const smoothSegment = meshGraph.getSmoothPath(startV, endV, 4);
+    
+    // 同时获取原始顶点路径用于存储
+    const rawSegment = meshGraph.shortestPath(startV, endV);
+    
+    // 合并顶点（跳过重复的起点）
+    if (i === 0) {
+      pathVertices.length = 0; // 清空，重新填充
+      pathVertices.push(...rawSegment);
+    } else {
+      pathVertices.push(...rawSegment.slice(1));
+    }
+    
+    // 合并平滑位置（跳过重复的起点）
+    if (i === 0) {
+      smoothPositions.push(...smoothSegment);
+    } else if (smoothSegment.length > 0) {
+      smoothPositions.push(...smoothSegment.slice(1));
+    }
+  }
+
+  // 如果只有一个控制点
+  if (controlVertices.length === 1) {
+    const pos = meshGraph.getPosition(controlVertices[0]);
+    if (pos) {
+      smoothPositions.push(pos.clone());
+    }
+  }
+
+  // 转换为 Float32Array
+  const positions = new Float32Array(smoothPositions.length * 3);
+  for (let i = 0; i < smoothPositions.length; i++) {
+    positions[i * 3] = smoothPositions[i].x;
+    positions[i * 3 + 1] = smoothPositions[i].y;
+    positions[i * 3 + 2] = smoothPositions[i].z;
   }
 
   store.setPathData(line.id, {
     pathVertices,
-    pathPositions: new Float32Array(positions),
+    pathPositions: positions,
   });
 
-  const pts: THREE.Vector3[] = [];
-  for (let i = 0; i < positions.length; i += 3) {
-    pts.push(new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]));
-  }
-  linePreview.update(pts);
+  linePreview.update(smoothPositions);
 }
 
 function findNearestControlPoint(target: THREE.Vector3): number | null {
