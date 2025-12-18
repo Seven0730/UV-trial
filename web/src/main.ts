@@ -880,23 +880,32 @@ function exportMeshWithLines(): string | null {
   const geometry = mesh.geometry as THREE.BufferGeometry;
   const position = geometry.getAttribute("position");
   const normal = geometry.getAttribute("normal");
+  const colorAttr = geometry.getAttribute("color"); // 获取顶点颜色属性
   const index = geometry.index;
 
   if (!position) return null;
 
-  // 获取原始材质颜色
-  let meshColor = { r: 0.827, g: 0.843, b: 0.867 }; // 默认颜色
+  // 获取原始材质颜色作为默认颜色
+  // 使用一个中性的灰色作为默认
+  let defaultMeshColor = { r: 0.75, g: 0.75, b: 0.75 }; // 默认灰色
   const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
-  if (material && (material as any).color) {
-    const color = (material as any).color as THREE.Color;
-    meshColor = { r: color.r, g: color.g, b: color.b };
+  if (material) {
+    const mat = material as THREE.MeshStandardMaterial;
+    // 如果材质没有启用 vertexColors 并且有颜色，使用材质颜色
+    if (!mat.vertexColors && mat.color) {
+      defaultMeshColor = { r: mat.color.r, g: mat.color.g, b: mat.color.b };
+    }
   }
+
+  // 检查是否有顶点颜色
+  const hasVertexColors = colorAttr !== null && colorAttr !== undefined;
 
   let objContent = "# OBJ Export with Segmentation Lines and Colors\n";
   objContent += `# Generated: ${new Date().toISOString()}\n`;
   objContent += `# Vertices: ${position.count}\n`;
   objContent += `# Faces: ${index ? index.count / 3 : position.count / 3}\n`;
-  objContent += "# Vertex format: v x y z r g b (color embedded)\n\n";
+  objContent += "# Vertex Colors: Yes\n";
+  objContent += "# Vertex format: v x y z r g b (RGB range 0-1)\n\n";
 
   // 导出所有顶点（带颜色）
   objContent += "# Mesh Vertices (with color)\n";
@@ -904,7 +913,21 @@ function exportMeshWithLines(): string | null {
     const x = position.getX(i);
     const y = position.getY(i);
     const z = position.getZ(i);
-    objContent += `v ${x.toFixed(6)} ${y.toFixed(6)} ${z.toFixed(6)} ${meshColor.r.toFixed(3)} ${meshColor.g.toFixed(3)} ${meshColor.b.toFixed(3)}\n`;
+    
+    let r: number, g: number, b: number;
+    if (hasVertexColors) {
+      // 使用原始顶点颜色
+      r = colorAttr.getX(i);
+      g = colorAttr.getY(i);
+      b = colorAttr.getZ(i);
+    } else {
+      // 使用材质颜色或默认颜色
+      r = defaultMeshColor.r;
+      g = defaultMeshColor.g;
+      b = defaultMeshColor.b;
+    }
+    
+    objContent += `v ${x.toFixed(6)} ${y.toFixed(6)} ${z.toFixed(6)} ${r.toFixed(6)} ${g.toFixed(6)} ${b.toFixed(6)}\n`;
   }
   objContent += "\n";
 
