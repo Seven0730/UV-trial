@@ -197,14 +197,14 @@ modeSelect?.addEventListener("change", () => {
 
 startLineBtn.addEventListener("click", () => {
   store.startLine();
-  linePreview.update([]);
+  rebuildPreview(); // 重新渲染所有线条（旧线保持可见）
   setStatus("新建线");
   updateLineInfo();
 });
 
 finishLineBtn.addEventListener("click", () => {
   store.finishLine();
-  linePreview.update([]);
+  rebuildPreview(); // 重新渲染所有线条
   setStatus("已结束当前线");
   updateLineInfo();
 });
@@ -268,7 +268,7 @@ deleteLineBtn.addEventListener("click", () => {
     return;
   }
   store.removeLine(current.id);
-  linePreview.clear();
+  rebuildPreview(); // 重新渲染剩余的线条
   updateLineInfo();
   setStatus(`已删除 ${current.id}`);
 });
@@ -455,7 +455,7 @@ canvas.addEventListener("pointerleave", () => {
 
 async function appendPathUsingGraph(hit: ReturnType<typeof pick>) {
   if (!meshGraph) {
-    linePreview.update(store.getCurrentPoints());
+    rebuildPreview();
     return;
   }
   const line = store.currentLine();
@@ -470,14 +470,14 @@ async function appendPathUsingGraph(hit: ReturnType<typeof pick>) {
         pathVertices: [nearestVertex],
         pathPositions: new Float32Array(pos.toArray()),
       });
-      linePreview.update([pos.clone()]);
+      rebuildPreview();
     }
     return;
   }
 
   const path = meshGraph.shortestPath(prevVertex, nearestVertex);
   if (!path.length) {
-    linePreview.update(store.getCurrentPoints());
+    rebuildPreview();
     return;
   }
   const positions: THREE.Vector3[] = [];
@@ -500,12 +500,7 @@ async function appendPathUsingGraph(hit: ReturnType<typeof pick>) {
   const mergedVertices = [...(line.pathVertices ?? []), ...path.slice(1)]; // skip first to avoid dup
   store.setPathData(line.id, { pathVertices: mergedVertices, pathPositions: merged });
 
-  // Build Vector3 list for preview
-  const allPoints: THREE.Vector3[] = [];
-  for (let i = 0; i < merged.length; i += 3) {
-    allPoints.push(new THREE.Vector3(merged[i], merged[i + 1], merged[i + 2]));
-  }
-  linePreview.update(allPoints);
+  rebuildPreview();
 }
 
 function selectClosestVertex(hit: ReturnType<typeof pick>): number {
@@ -598,20 +593,20 @@ function buildMeshGraph(group: THREE.Group): MeshGraphBuilder | null {
 }
 
 function rebuildPreview() {
-  const line = store.currentLine();
-  if (!line) {
-    linePreview.update([]);
-    return;
+  const lines = store.getLines();
+  const currentLine = store.currentLine();
+  const currentId = currentLine?.id;
+  
+  // 渲染所有线条，高亮当前线
+  linePreview.renderAllLines(lines, currentId);
+  
+  // 设置当前选中的线（用于高亮）
+  linePreview.setCurrentLine(currentId || null);
+  
+  // 如果当前线有控制点但没有pathPositions，显示实时预览
+  if (currentLine && (!currentLine.pathPositions || currentLine.pathPositions.length === 0)) {
+    linePreview.update(store.getCurrentPoints());
   }
-  if (line.pathPositions && line.pathPositions.length >= 3) {
-    const pts: THREE.Vector3[] = [];
-    for (let i = 0; i < line.pathPositions.length; i += 3) {
-      pts.push(new THREE.Vector3(line.pathPositions[i], line.pathPositions[i + 1], line.pathPositions[i + 2]));
-    }
-    linePreview.update(pts);
-    return;
-  }
-  linePreview.update(store.getCurrentPoints());
 }
 
 function addTestBox() {
@@ -634,13 +629,13 @@ function addTestBox() {
 function recomputePathFromControlPoints() {
   const line = store.currentLine();
   if (!line || !meshGraph) {
-    linePreview.update(store.getCurrentPoints());
+    rebuildPreview();
     return;
   }
   const cps = line.controlPoints;
   if (cps.length === 0) {
     store.setPathData(line.id, { pathVertices: [], pathPositions: new Float32Array() });
-    linePreview.update([]);
+    rebuildPreview();
     return;
   }
 
@@ -714,7 +709,8 @@ function recomputePathFromControlPoints() {
     pathPositions: positions,
   });
 
-  linePreview.update(smoothPositions);
+  // 更新当前线的实时预览，同时保持其他线可见
+  rebuildPreview();
 }
 
 function findNearestControlPoint(target: THREE.Vector3): number | null {
@@ -788,11 +784,7 @@ function updatePathVertex(pathIndex: number, newVertex: number) {
     positions[pathIndex * 3 + 1] = pos.y;
     positions[pathIndex * 3 + 2] = pos.z;
     store.setPathData(line.id, { pathVertices: verts, pathPositions: positions });
-    const pts: THREE.Vector3[] = [];
-    for (let i = 0; i < positions.length; i += 3) {
-      pts.push(new THREE.Vector3(positions[i], positions[i + 1], positions[i + 2]));
-    }
-    linePreview.update(pts);
+    rebuildPreview();
     return;
   }
 
@@ -803,16 +795,14 @@ function updatePathVertex(pathIndex: number, newVertex: number) {
   const verts = [...prefix, ...leftSegment, ...rightSegment, ...suffix];
 
   const positions: number[] = [];
-  const pts: THREE.Vector3[] = [];
   for (const v of verts) {
     const p = meshGraph.getPosition(v);
     if (!p) continue;
     positions.push(p.x, p.y, p.z);
-    pts.push(p.clone());
   }
 
   store.setPathData(line.id, { pathVertices: verts, pathPositions: new Float32Array(positions) });
-  linePreview.update(pts);
+  rebuildPreview();
 }
 
 function setupDragAndDrop(target: HTMLElement) {
