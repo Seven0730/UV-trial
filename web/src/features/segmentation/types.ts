@@ -14,6 +14,7 @@ export interface SegmentLine {
   segments?: Segment[];
   pathVertices?: number[];
   pathPositions?: Float32Array;
+  isClosed?: boolean; // 是否为闭合线（套圈）
 }
 
 export interface SegmentationState {

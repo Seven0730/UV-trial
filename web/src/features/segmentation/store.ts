@@ -56,6 +56,7 @@ export class SegmentationStore {
         })),
         pathVertices: l.pathVertices,
         pathPositions: l.pathPositions ? Array.from(l.pathPositions) : undefined,
+        isClosed: l.isClosed,
         segments: l.segments?.map((s) => ({
           id: s.id,
           points: s.points.map((p) => ({
@@ -83,6 +84,7 @@ export class SegmentationStore {
         })),
         pathVertices: l.pathVertices,
         pathPositions: l.pathPositions ? new Float32Array(l.pathPositions) : undefined,
+        isClosed: l.isClosed,
         segments: l.segments?.map((s: any) => ({
           id: s.id,
           points: s.points.map((p: any) => ({

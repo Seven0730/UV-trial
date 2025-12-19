@@ -2,9 +2,10 @@ import * as THREE from "three";
 import { centerAndFit, disposeObject3D, setupLights } from "./core/three/helpers";
 import { loadOBJFromFile, loadOBJFromURL } from "./core/three/loaders";
 import { createThree, resizeRenderer, startRenderLoop } from "./core/three/scene";
+import { LassoOverlay } from "./features/segmentation/lassoOverlay";
 import { LinePreview } from "./features/segmentation/linePreview";
 import { MeshGraphBuilder } from "./features/segmentation/meshGraph";
-import { pick } from "./features/segmentation/raycast";
+import { pick, pickMultiple } from "./features/segmentation/raycast";
 import { SegmentationStore } from "./features/segmentation/store";
 import "./style.css";
 
@@ -19,6 +20,32 @@ if (!app) {
 app.innerHTML = `
   <div class="main">
     <canvas id="viewport"></canvas>
+    
+    <!-- 顶部模式切换工具栏 -->
+    <div class="mode-toolbar" id="modeToolbar">
+      <button class="mode-btn active" data-mode="draw" title="划线模式 (Shift+点击)">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 19l7-7 3 3-7 7-3-3z"/>
+          <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/>
+          <path d="M2 2l7.586 7.586"/>
+        </svg>
+        <span>划线</span>
+      </button>
+      <button class="mode-btn" data-mode="lasso" title="套圈模式 (拖动绘制)">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="9"/>
+          <path d="M12 21c-2 0-4-4-4-9s2-9 4-9"/>
+        </svg>
+        <span>套圈</span>
+      </button>
+      <button class="mode-btn" data-mode="edit" title="微调模式 (拖动控制点)">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+        </svg>
+        <span>微调</span>
+      </button>
+    </div>
     
     <!-- 左侧工具栏 -->
     <div class="sidebar" id="sidebar">
@@ -71,15 +98,6 @@ app.innerHTML = `
           </label>
         </div>
         
-        <!-- 操作模式组 -->
-        <div class="tool-group">
-          <div class="group-title">操作模式</div>
-          <select id="modeSelect" class="tool-select">
-            <option value="draw" selected>划线模式</option>
-            <option value="edit">微调模式</option>
-          </select>
-        </div>
-        
         <!-- 状态信息 -->
         <div class="tool-group">
           <div id="progress" class="progress-text">idle</div>
@@ -99,7 +117,7 @@ app.innerHTML = `
     
     <!-- 使用说明 -->
     <div class="help-overlay" id="helpOverlay">
-      <strong>模式切换</strong> 划线模式：Shift+单击添加点；微调模式：单击拖动已有点，在表面滑动。<br/><br/>
+      <strong>模式切换</strong> 划线模式：Shift+单击添加点；套圈模式：按住拖动绘制闭合曲线；微调模式：单击拖动已有点。<br/><br/>
       <strong>撤销/重做</strong> Ctrl+Z 撤销，Ctrl+Y 或 Ctrl+Shift+Z 重做操作。<br/><br/>
       <strong>路径</strong> 依网格边最短路生成，默认隐藏路径点，可通过复选框显示；线/点粗细可调。<br/><br/>
       <strong>拖拽/点击导入 OBJ</strong>，默认加载 <code>test_large.obj</code>。
@@ -122,7 +140,8 @@ const exportObjBtn = document.querySelector<HTMLButtonElement>("#exportObj")!;
 const lineWidthInput = document.querySelector<HTMLInputElement>("#lineWidth") as HTMLInputElement | null;
 const pointSizeInput = document.querySelector<HTMLInputElement>("#pointSize") as HTMLInputElement | null;
 const showPointsInput = document.querySelector<HTMLInputElement>("#showPoints") as HTMLInputElement | null;
-const modeSelect = document.querySelector<HTMLSelectElement>("#modeSelect");
+const modeToolbar = document.querySelector<HTMLDivElement>("#modeToolbar");
+const modeBtns = document.querySelectorAll<HTMLButtonElement>(".mode-btn");
 const lineInfoBox = document.querySelector<HTMLDivElement>("#lineInfo")!;
 const lineListBody = document.querySelector<HTMLDivElement>("#lineListBody")!;
 const sidebar = document.querySelector<HTMLDivElement>("#sidebar")!;
@@ -147,8 +166,11 @@ const store = new SegmentationStore();
 let meshGraph: MeshGraphBuilder | null = null;
 let draggingTarget: { kind: "control"; index: number } | null = null;
 let isDraggingControlPoint = false; // 标记是否正在拖动控制点
-type InteractionMode = "draw" | "edit";
+type InteractionMode = "draw" | "edit" | "lasso";
 let mode: InteractionMode = "draw";
+
+// 套圈绘制覆盖层
+const lassoOverlay = new LassoOverlay(app!);
 
 addTestBox();
 resizeRenderer(three);
@@ -186,12 +208,27 @@ showPointsInput?.addEventListener("change", () => {
   rebuildPreview();
 });
 
-modeSelect?.addEventListener("change", () => {
-  mode = (modeSelect.value as InteractionMode) ?? "draw";
-  const modeText = mode === "draw" ? "划线模式" : "微调模式";
-  setStatus(`已切换到${modeText}`);
-  // 微调模式下尽量避免 Orbit 干扰，绘制时保持正常
-  three.controls.enableRotate = mode !== "edit";
+// 模式切换按钮事件
+modeBtns.forEach(btn => {
+  btn.addEventListener("click", () => {
+    const newMode = btn.dataset.mode as InteractionMode;
+    if (!newMode) return;
+    
+    mode = newMode;
+    
+    // 更新按钮状态
+    modeBtns.forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    
+    const modeTextMap: Record<InteractionMode, string> = {
+      draw: "划线模式",
+      lasso: "套圈模式",
+      edit: "微调模式",
+    };
+    setStatus(`已切换到${modeTextMap[mode]}`);
+    // 微调模式和套圈模式下禁用旋转
+    three.controls.enableRotate = mode === "draw";
+  });
 });
 
 startLineBtn.addEventListener("click", () => {
@@ -304,6 +341,17 @@ exportObjBtn.addEventListener("click", () => {
 });
 
 canvas.addEventListener("pointerdown", async (event) => {
+  // 套圈模式 - 开始绘制
+  if (mode === "lasso") {
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    three.controls.enabled = false; // 禁用所有控制
+    lassoOverlay.startDrawing(x, y);
+    setStatus("正在绘制套圈...");
+    return;
+  }
+
   if (mode === "edit") {
     const hit = pick(event, three.camera, modelRoot);
     if (hit) {
@@ -391,6 +439,15 @@ canvas.addEventListener("pointerdown", async (event) => {
 setupDragAndDrop(canvas);
 
 canvas.addEventListener("pointermove", (event) => {
+  // 套圈模式 - 添加点
+  if (mode === "lasso" && lassoOverlay.getIsDrawing()) {
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    lassoOverlay.addPoint(x, y);
+    return;
+  }
+
   if (!draggingTarget) return;
   const hit = pick(event, three.camera, modelRoot);
   if (!hit) return;
@@ -406,7 +463,14 @@ canvas.addEventListener("pointermove", (event) => {
   recomputePathFromControlPoints();
 });
 
-canvas.addEventListener("pointerup", () => {
+canvas.addEventListener("pointerup", (event) => {
+  // 套圈模式 - 完成绘制
+  if (mode === "lasso") {
+    three.controls.enabled = true; // 恢复控制
+    finishLassoDrawing();
+    return;
+  }
+
   // 拖动结束后保存历史状态
   if (isDraggingControlPoint) {
     store.saveHistorySnapshot();
@@ -414,9 +478,19 @@ canvas.addEventListener("pointerup", () => {
     isDraggingControlPoint = false;
   }
   draggingTarget = null;
-  three.controls.enableRotate = mode !== "edit";
+  three.controls.enabled = true;
+  three.controls.enableRotate = mode === "draw";
 });
+
 canvas.addEventListener("pointerleave", () => {
+  // 套圈模式 - 取消绘制
+  if (mode === "lasso" && lassoOverlay.getIsDrawing()) {
+    three.controls.enabled = true; // 恢复控制
+    lassoOverlay.clear();
+    setStatus("套圈绘制已取消");
+    return;
+  }
+
   // 拖动意外结束也保存历史
   if (isDraggingControlPoint) {
     store.saveHistorySnapshot();
@@ -424,8 +498,93 @@ canvas.addEventListener("pointerleave", () => {
     isDraggingControlPoint = false;
   }
   draggingTarget = null;
-  three.controls.enableRotate = mode !== "edit";
+  three.controls.enabled = true;
+  three.controls.enableRotate = mode === "draw";
 });
+
+/**
+ * 完成套圈绘制，将2D曲线投影到3D模型表面
+ */
+function finishLassoDrawing() {
+  console.log("finishLassoDrawing called");
+  const ndcPoints = lassoOverlay.finishDrawing();
+  console.log("ndcPoints:", ndcPoints.length);
+  
+  if (ndcPoints.length < 3) {
+    setStatus("套圈点数不足，至少需要3个点");
+    return;
+  }
+
+  if (!meshGraph) {
+    setStatus("请先加载模型");
+    return;
+  }
+
+  setStatus(`正在投影套圈 (${ndcPoints.length} 点)...`);
+
+  // 将2D套圈投影到3D模型表面
+  const hits = pickMultiple(ndcPoints, three.camera, modelRoot);
+  console.log("hits:", hits.length, "valid:", hits.filter(h => h !== null).length);
+  
+  // 收集有效的表面顶点
+  const surfaceVertices: number[] = [];
+  for (const hit of hits) {
+    if (hit) {
+      const vertexIndex = selectClosestVertexFromHit(hit);
+      surfaceVertices.push(vertexIndex);
+    }
+  }
+  console.log("surfaceVertices:", surfaceVertices.length);
+
+  if (surfaceVertices.length < 3) {
+    setStatus(`投影点不足 (${surfaceVertices.length}/${ndcPoints.length})，请确保套圈覆盖模型`);
+    return;
+  }
+
+  // 生成闭合路径
+  console.log("calling generateClosedLoop");
+  const loopData = meshGraph.generateClosedLoop(surfaceVertices);
+  console.log("loopData:", loopData);
+  
+  if (!loopData) {
+    setStatus("无法生成闭合路径，请重试");
+    return;
+  }
+
+  // 创建新的闭合线
+  store.startLine(false);
+  const line = store.currentLine();
+  if (line) {
+    line.isClosed = true;
+    // 设置路径数据（闭合线通常没有用户控制点）
+    store.setPathData(line.id, {
+      pathVertices: loopData.pathVertices,
+      pathPositions: loopData.pathPositions,
+    });
+    store.saveHistorySnapshot();
+  }
+
+  rebuildPreview();
+  updateLineInfo();
+  setStatus(`套圈完成！生成 ${loopData.pathVertices.length} 个路径点`);
+}
+
+/**
+ * 从 RaycastHit 获取最近顶点（用于批量处理）
+ */
+function selectClosestVertexFromHit(hit: { barycentric: [number, number, number]; vertexIndices: [number, number, number] }): number {
+  const weights = hit.barycentric;
+  const indices = hit.vertexIndices;
+  let maxIdx = 0;
+  if (weights[1] > weights[maxIdx]) maxIdx = 1;
+  if (weights[2] > weights[maxIdx]) maxIdx = 2;
+  const origIndex = indices[maxIdx];
+  if (meshGraph) {
+    const merged = meshGraph.getMergedIndex(origIndex);
+    if (merged !== -1) return merged;
+  }
+  return origIndex;
+}
 
 async function appendPathUsingGraph(hit: ReturnType<typeof pick>) {
   if (!meshGraph) {
@@ -824,10 +983,11 @@ function renderLineList(lines: ReturnType<SegmentationStore["getLines"]>, curren
       const active = line.id === currentId;
       const bg = active ? "rgba(76,149,255,0.08)" : "rgba(255,255,255,0.03)";
       const border = active ? "rgba(76,149,255,0.3)" : "rgba(255,255,255,0.05)";
+      const typeLabel = line.isClosed ? "🔵 套圈" : "📏 路径";
       return `
         <div data-line-id="${line.id}" style="cursor:pointer; padding:6px; margin-bottom:6px; border:1px solid ${border}; border-radius:6px; background:${bg};">
           <div style="font-weight:600;">${line.id}${active ? " (当前)" : ""}</div>
-          <div style="font-size:11px; color: var(--muted);">点: ${pts} | 段: ${segs}</div>
+          <div style="font-size:11px; color: var(--muted);">${typeLabel} | 点: ${pts} | 段: ${segs}</div>
         </div>
       `;
     })

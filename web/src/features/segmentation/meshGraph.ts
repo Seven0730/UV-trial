@@ -262,7 +262,7 @@ export class MeshGraphBuilder {
   /**
    * 等距重采样 - 使路径点均匀分布
    */
-  private resampleByArcLength(points: THREE.Vector3[]): THREE.Vector3[] {
+  resampleByArcLength(points: THREE.Vector3[], spacing?: number): THREE.Vector3[] {
     if (points.length < 2) return points.map(p => p.clone());
 
     // 计算总弧长
@@ -276,8 +276,8 @@ export class MeshGraphBuilder {
 
     if (totalLength < 1e-6) return [points[0].clone()];
 
-    // 目标采样间距：使用平均边长的2倍作为目标间距
-    const targetSpacing = this.avgEdgeLength * 2;
+    // 目标采样间距：使用传入值或平均边长的2倍
+    const targetSpacing = spacing ?? this.avgEdgeLength * 2;
     const numSamples = Math.max(2, Math.ceil(totalLength / targetSpacing) + 1);
     const sampleSpacing = totalLength / (numSamples - 1);
 
@@ -420,5 +420,127 @@ export class MeshGraphBuilder {
     }
 
     this.avgEdgeLength = edgeCount > 0 ? totalEdgeLength / edgeCount : 0.01;
+  }
+
+  /**
+   * 生成闭合环路
+   * 将一系列表面顶点连接成闭合路径
+   * @param surfaceVertices 表面顶点索引数组
+   * @returns 闭合路径数据
+   */
+  generateClosedLoop(surfaceVertices: number[]): {
+    pathVertices: number[];
+    pathPositions: Float32Array;
+  } | null {
+    if (surfaceVertices.length < 3) return null;
+
+    // 过滤无效顶点
+    const validVertices = surfaceVertices.filter(v => 
+      v >= 0 && v < this.positions.length
+    );
+    
+    if (validVertices.length < 3) return null;
+
+    // 去重相邻顶点
+    const deduped: number[] = [validVertices[0]];
+    for (let i = 1; i < validVertices.length; i++) {
+      if (validVertices[i] !== deduped[deduped.length - 1]) {
+        deduped.push(validVertices[i]);
+      }
+    }
+    // 检查首尾是否重复
+    if (deduped.length > 1 && deduped[0] === deduped[deduped.length - 1]) {
+      deduped.pop();
+    }
+
+    if (deduped.length < 3) return null;
+
+    // 连接相邻顶点形成闭合路径
+    const allPathVertices: number[] = [];
+    const allPathPositions: THREE.Vector3[] = [];
+
+    for (let i = 0; i < deduped.length; i++) {
+      const start = deduped[i];
+      const end = deduped[(i + 1) % deduped.length]; // 闭环
+
+      // 获取两点之间的最短路径
+      const segment = this.shortestPath(start, end);
+
+      if (segment.length === 0) {
+        // 无法找到路径，直接连接
+        if (allPathVertices.length === 0 || allPathVertices[allPathVertices.length - 1] !== start) {
+          allPathVertices.push(start);
+          allPathPositions.push(this.positions[start].clone());
+        }
+        continue;
+      }
+
+      // 添加路径段（跳过第一个点如果已经在路径中）
+      for (let j = 0; j < segment.length; j++) {
+        const v = segment[j];
+        if (j === 0 && allPathVertices.length > 0 && allPathVertices[allPathVertices.length - 1] === v) {
+          continue; // 跳过重复点
+        }
+        allPathVertices.push(v);
+        allPathPositions.push(this.positions[v].clone());
+      }
+    }
+
+    // 移除最后一个点如果它与第一个点重复（因为是闭环）
+    if (allPathVertices.length > 1 && 
+        allPathVertices[0] === allPathVertices[allPathVertices.length - 1]) {
+      allPathVertices.pop();
+      allPathPositions.pop();
+    }
+
+    if (allPathVertices.length < 3) return null;
+
+    // 简化路径
+    const simplified = this.simplifyPath(allPathVertices);
+    
+    // 使用简化后的顶点获取位置
+    const simplifiedPositions = simplified.map(v => this.positions[v]);
+
+    // Catmull-Rom 平滑（闭环模式）
+    const smoothed = this.catmullRomInterpolateClosed(simplifiedPositions, 4);
+
+    // 等距重采样
+    const resampled = this.resampleByArcLength(smoothed);
+
+    // 转换为 Float32Array
+    const posArray = new Float32Array(resampled.length * 3);
+    for (let i = 0; i < resampled.length; i++) {
+      posArray[i * 3] = resampled[i].x;
+      posArray[i * 3 + 1] = resampled[i].y;
+      posArray[i * 3 + 2] = resampled[i].z;
+    }
+
+    return {
+      pathVertices: simplified,
+      pathPositions: posArray,
+    };
+  }
+
+  /**
+   * 闭合 Catmull-Rom 样条插值
+   */
+  private catmullRomInterpolateClosed(
+    points: THREE.Vector3[],
+    samplesPerSegment: number
+  ): THREE.Vector3[] {
+    if (points.length < 3) return points.map(p => p.clone());
+
+    const result: THREE.Vector3[] = [];
+    
+    // 使用 Three.js 内置的 CatmullRomCurve3，closed = true
+    const curve = new THREE.CatmullRomCurve3(points, true, 'centripetal', 0.5);
+    const totalSamples = points.length * samplesPerSegment;
+    
+    for (let i = 0; i < totalSamples; i++) {
+      const t = i / totalSamples;
+      result.push(curve.getPoint(t));
+    }
+
+    return result;
   }
 }

@@ -107,7 +107,7 @@ export class LinePreview {
       
       const points = this.positionsToPoints(line.pathPositions);
       const isActive = line.id === currentLineId;
-      this.updateLineGeometry(line.id, points, isActive);
+      this.updateLineGeometry(line.id, points, isActive, line.isClosed ?? false);
     }
   }
 
@@ -131,15 +131,15 @@ export class LinePreview {
     }
   }
 
-  private updateLineGeometry(lineId: string, points: THREE.Vector3[], isActive: boolean) {
+  private updateLineGeometry(lineId: string, points: THREE.Vector3[], isActive: boolean, isClosed = false) {
     if (points.length < 2) return;
     
-    const curve = new THREE.CatmullRomCurve3(points, false, 'centripetal', 0.5);
+    const curve = new THREE.CatmullRomCurve3(points, isClosed, 'centripetal', 0.5);
     const tubularSegments = Math.min(Math.max(points.length * 2, 16), 128);
     const radius = Math.max(this.sizeRef() * this.tubeRadiusFactor, 0.0005);
     const radialSegments = 6;
     
-    const geometry = new THREE.TubeGeometry(curve, tubularSegments, radius, radialSegments, false);
+    const geometry = new THREE.TubeGeometry(curve, tubularSegments, radius, radialSegments, isClosed);
     const material = isActive ? this.activeMat : this.inactiveMat;
     
     // 检查是否已存在
