@@ -145,8 +145,7 @@ let boundingSize = 1;
 const linePreview = new LinePreview(three.scene, () => boundingSize);
 const store = new SegmentationStore();
 let meshGraph: MeshGraphBuilder | null = null;
-let draggingTarget: { kind: "control"; index: number } | { kind: "path"; index: number } | null = null;
-let activePathDragControlIndex: number | null = null;
+let draggingTarget: { kind: "control"; index: number } | null = null;
 let isDraggingControlPoint = false; // 标记是否正在拖动控制点
 type InteractionMode = "draw" | "edit";
 let mode: InteractionMode = "draw";
@@ -311,74 +310,53 @@ canvas.addEventListener("pointerdown", async (event) => {
       const target = findNearestEditablePoint(hit.point);
       if (target) {
         const line = store.currentLine();
-        if (target.kind === "path" && line && meshGraph && line.pathVertices?.length) {
-          const pathIndex = target.index;
-          const oldVertex = line.pathVertices[pathIndex];
-          const directCpIndex = line.controlPoints.findIndex((cp) => cp.vertexIndex === oldVertex);
-          if (directCpIndex !== -1) {
-            // 拖动已有控制点，保存历史
-            store.saveHistorySnapshot();
-            isDraggingControlPoint = true;
-            activePathDragControlIndex = directCpIndex;
-            draggingTarget = { kind: "control", index: directCpIndex };
-            setStatus(`拖动控制点 #${directCpIndex + 1}`);
-          } else {
-            // 插入新控制点，保存历史
-            store.saveHistorySnapshot();
-            isDraggingControlPoint = true;
-            
-            // Insert a new control point once at drag start.
-            const controlPathIndices: Array<{ cpIndex: number; pathIndex: number }> = [];
-            for (let i = 0; i < line.controlPoints.length; i++) {
-              const v = line.controlPoints[i].vertexIndex;
-              if (v === undefined) continue;
-              const pi = line.pathVertices.indexOf(v);
-              if (pi !== -1) controlPathIndices.push({ cpIndex: i, pathIndex: pi });
-            }
-            controlPathIndices.sort((a, b) => a.pathIndex - b.pathIndex);
-
-            let insertAt = line.controlPoints.length;
-            for (let i = controlPathIndices.length - 1; i >= 0; i--) {
-              if (controlPathIndices[i].pathIndex < pathIndex) {
-                insertAt = controlPathIndices[i].cpIndex + 1;
-                break;
-              }
-            }
-            if (controlPathIndices.length && controlPathIndices[0].pathIndex > pathIndex) {
-              insertAt = controlPathIndices[0].cpIndex;
-            }
-
-            line.controlPoints.splice(insertAt, 0, {
-              position: line.pathPositions
-                ? new THREE.Vector3(
-                    line.pathPositions[pathIndex * 3],
-                    line.pathPositions[pathIndex * 3 + 1],
-                    line.pathPositions[pathIndex * 3 + 2],
-                  )
-                : hit.point.clone(),
-              vertexIndex: oldVertex,
-            });
-            if (line.segments) {
-              line.segments = [
-                {
-                  id: `${line.id}-seg-1`,
-                  points: line.controlPoints.map((p) => ({ ...p, position: p.position.clone() })),
-                },
-              ];
-            }
-            recomputePathFromControlPoints();
-            activePathDragControlIndex = insertAt;
-            draggingTarget = { kind: "control", index: insertAt };
-            setStatus(`拖动控制点 #${insertAt + 1} (新插入)`);
-          }
-        } else {
-          // 拖动已有控制点，保存历史
+        
+        if (target.kind === "control") {
+          // 拖动已有控制点
           store.saveHistorySnapshot();
           isDraggingControlPoint = true;
-          activePathDragControlIndex = null;
-          draggingTarget = target;
-          setStatus(target.kind === "control" ? `拖动控制点 #${target.index + 1}` : `拖动路径点 #${target.index + 1}`);
+          draggingTarget = { kind: "control", index: target.index };
+          setStatus(`拖动控制点 #${target.index + 1}`);
+        } else if (target.kind === "path" && line) {
+          // 点击路径点，插入新控制点并拖动
+          store.saveHistorySnapshot();
+          isDraggingControlPoint = true;
+          
+          // 找到应该插入的位置（在哪两个控制点之间）
+          const clickedPos = target.position;
+          let insertAt = line.controlPoints.length;
+          
+          // 找到点击位置在路径上的相对位置，确定插入到哪个控制点之后
+          if (line.controlPoints.length >= 2) {
+            let minSegmentDist = Infinity;
+            for (let i = 0; i < line.controlPoints.length - 1; i++) {
+              const p1 = line.controlPoints[i].position;
+              const p2 = line.controlPoints[i + 1].position;
+              // 计算点到线段的距离
+              const segmentDist = distanceToSegment(clickedPos, p1, p2);
+              if (segmentDist < minSegmentDist) {
+                minSegmentDist = segmentDist;
+                insertAt = i + 1;
+              }
+            }
+          }
+          
+          // 获取最近的网格顶点
+          const vertexIndex = selectClosestVertex(hit);
+          
+          // 插入新控制点
+          line.controlPoints.splice(insertAt, 0, {
+            position: clickedPos.clone(),
+            vertexIndex: vertexIndex,
+          });
+          
+          // 重新计算路径
+          recomputePathFromControlPoints();
+          
+          draggingTarget = { kind: "control", index: insertAt };
+          setStatus(`拖动控制点 #${insertAt + 1} (新插入)`);
         }
+        
         three.controls.enableRotate = false;
         return;
       }
@@ -417,19 +395,15 @@ canvas.addEventListener("pointermove", (event) => {
   const hit = pick(event, three.camera, modelRoot);
   if (!hit) return;
   const vertexIndex = selectClosestVertex(hit);
-  if (draggingTarget.kind === "control") {
-    // 拖动过程中不保存历史
-    store.updateControlPoint(draggingTarget.index, {
-      position: hit.point,
-      faceIndex: hit.faceIndex,
-      barycentric: hit.barycentric,
-      vertexIndices: hit.vertexIndices,
-      vertexIndex,
-    }, false);
-    recomputePathFromControlPoints();
-  } else if (draggingTarget.kind === "path") {
-    updatePathVertex(draggingTarget.index, vertexIndex);
-  }
+  // 拖动控制点，更新位置并重新计算路径
+  store.updateControlPoint(draggingTarget.index, {
+    position: hit.point,
+    faceIndex: hit.faceIndex,
+    barycentric: hit.barycentric,
+    vertexIndices: hit.vertexIndices,
+    vertexIndex,
+  }, false);
+  recomputePathFromControlPoints();
 });
 
 canvas.addEventListener("pointerup", () => {
@@ -440,7 +414,6 @@ canvas.addEventListener("pointerup", () => {
     isDraggingControlPoint = false;
   }
   draggingTarget = null;
-  activePathDragControlIndex = null;
   three.controls.enableRotate = mode !== "edit";
 });
 canvas.addEventListener("pointerleave", () => {
@@ -451,7 +424,6 @@ canvas.addEventListener("pointerleave", () => {
     isDraggingControlPoint = false;
   }
   draggingTarget = null;
-  activePathDragControlIndex = null;
   three.controls.enableRotate = mode !== "edit";
 });
 
@@ -732,6 +704,21 @@ function recomputePathFromControlPoints() {
   rebuildPreview();
 }
 
+/**
+ * 计算点到线段的距离
+ */
+function distanceToSegment(point: THREE.Vector3, segStart: THREE.Vector3, segEnd: THREE.Vector3): number {
+  const segDir = new THREE.Vector3().subVectors(segEnd, segStart);
+  const segLength = segDir.length();
+  if (segLength < 1e-6) return point.distanceTo(segStart);
+  
+  segDir.divideScalar(segLength);
+  const toPoint = new THREE.Vector3().subVectors(point, segStart);
+  const t = Math.max(0, Math.min(segLength, toPoint.dot(segDir)));
+  const closest = new THREE.Vector3().addVectors(segStart, segDir.multiplyScalar(t));
+  return point.distanceTo(closest);
+}
+
 function findNearestControlPoint(target: THREE.Vector3): number | null {
   const line = store.currentLine();
   if (!line) return null;
@@ -749,14 +736,14 @@ function findNearestControlPoint(target: THREE.Vector3): number | null {
   return minDist <= threshold ? nearest : null;
 }
 
-function findNearestEditablePoint(target: THREE.Vector3): { kind: "control"; index: number } | { kind: "path"; index: number } | null {
+function findNearestEditablePoint(target: THREE.Vector3): { kind: "control"; index: number } | { kind: "path"; pathIndex: number; position: THREE.Vector3 } | null {
   const line = store.currentLine();
   if (!line) return null;
 
-  let best: { kind: "control"; index: number } | { kind: "path"; index: number } | null = null;
+  let best: { kind: "control"; index: number } | { kind: "path"; pathIndex: number; position: THREE.Vector3 } | null = null;
   let minDist = Infinity;
 
-  // check control points
+  // 检查控制点
   line.controlPoints.forEach((p, idx) => {
     const d = p.position.distanceTo(target);
     if (d < minDist) {
@@ -765,63 +752,24 @@ function findNearestEditablePoint(target: THREE.Vector3): { kind: "control"; ind
     }
   });
 
-  // check path points
+  // 检查路径点
   if (line.pathPositions) {
     for (let i = 0; i < line.pathPositions.length; i += 3) {
-      const vx = line.pathPositions[i];
-      const vy = line.pathPositions[i + 1];
-      const vz = line.pathPositions[i + 2];
-      const d = target.distanceToSquared(new THREE.Vector3(vx, vy, vz));
-      if (d < minDist * minDist) {
-        minDist = Math.sqrt(d);
-        best = { kind: "path", index: i / 3 };
+      const pos = new THREE.Vector3(
+        line.pathPositions[i],
+        line.pathPositions[i + 1],
+        line.pathPositions[i + 2]
+      );
+      const d = target.distanceTo(pos);
+      if (d < minDist) {
+        minDist = d;
+        best = { kind: "path", pathIndex: i / 3, position: pos };
       }
     }
   }
 
   const threshold = boundingSize * 0.05;
   return minDist <= threshold ? best : null;
-}
-
-function updatePathVertex(pathIndex: number, newVertex: number) {
-  const line = store.currentLine();
-  if (!line || !meshGraph || !line.pathVertices || !line.pathPositions) return;
-  if (pathIndex < 0 || pathIndex >= line.pathVertices.length) return;
-  const pos = meshGraph.getPosition(newVertex);
-  if (!pos) return;
-  const prevVertex = pathIndex > 0 ? line.pathVertices[pathIndex - 1] : null;
-  const nextVertex = pathIndex < line.pathVertices.length - 1 ? line.pathVertices[pathIndex + 1] : null;
-
-  const leftPath = prevVertex !== null ? meshGraph.shortestPath(prevVertex, newVertex) : [newVertex];
-  const rightPath = nextVertex !== null ? meshGraph.shortestPath(newVertex, nextVertex) : [newVertex];
-
-  if ((prevVertex !== null && leftPath.length === 0) || (nextVertex !== null && rightPath.length === 0)) {
-    const verts = [...line.pathVertices];
-    verts[pathIndex] = newVertex;
-    const positions = new Float32Array(line.pathPositions);
-    positions[pathIndex * 3] = pos.x;
-    positions[pathIndex * 3 + 1] = pos.y;
-    positions[pathIndex * 3 + 2] = pos.z;
-    store.setPathData(line.id, { pathVertices: verts, pathPositions: positions });
-    rebuildPreview();
-    return;
-  }
-
-  const prefix = line.pathVertices.slice(0, pathIndex);
-  const suffix = nextVertex !== null ? line.pathVertices.slice(pathIndex + 2) : [];
-  const leftSegment = prevVertex !== null ? leftPath.slice(1) : leftPath;
-  const rightSegment = nextVertex !== null ? rightPath.slice(1) : [];
-  const verts = [...prefix, ...leftSegment, ...rightSegment, ...suffix];
-
-  const positions: number[] = [];
-  for (const v of verts) {
-    const p = meshGraph.getPosition(v);
-    if (!p) continue;
-    positions.push(p.x, p.y, p.z);
-  }
-
-  store.setPathData(line.id, { pathVertices: verts, pathPositions: new Float32Array(positions) });
-  rebuildPreview();
 }
 
 function setupDragAndDrop(target: HTMLElement) {
