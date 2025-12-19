@@ -506,9 +506,7 @@ canvas.addEventListener("pointerleave", () => {
  * 完成套圈绘制，将2D曲线投影到3D模型表面
  */
 function finishLassoDrawing() {
-  console.log("finishLassoDrawing called");
   const ndcPoints = lassoOverlay.finishDrawing();
-  console.log("ndcPoints:", ndcPoints.length);
   
   if (ndcPoints.length < 3) {
     setStatus("套圈点数不足，至少需要3个点");
@@ -524,17 +522,30 @@ function finishLassoDrawing() {
 
   // 将2D套圈投影到3D模型表面
   const hits = pickMultiple(ndcPoints, three.camera, modelRoot);
-  console.log("hits:", hits.length, "valid:", hits.filter(h => h !== null).length);
   
-  // 收集有效的表面顶点
+  // 收集有效的表面顶点和控制点信息
   const surfaceVertices: number[] = [];
+  const controlPointsData: Array<{
+    position: THREE.Vector3;
+    vertexIndex: number;
+    faceIndex: number;
+    barycentric: [number, number, number];
+    vertexIndices: [number, number, number];
+  }> = [];
+  
   for (const hit of hits) {
     if (hit) {
       const vertexIndex = selectClosestVertexFromHit(hit);
       surfaceVertices.push(vertexIndex);
+      controlPointsData.push({
+        position: hit.point.clone(),
+        vertexIndex,
+        faceIndex: hit.faceIndex,
+        barycentric: hit.barycentric,
+        vertexIndices: hit.vertexIndices,
+      });
     }
   }
-  console.log("surfaceVertices:", surfaceVertices.length);
 
   if (surfaceVertices.length < 3) {
     setStatus(`投影点不足 (${surfaceVertices.length}/${ndcPoints.length})，请确保套圈覆盖模型`);
@@ -542,9 +553,7 @@ function finishLassoDrawing() {
   }
 
   // 生成闭合路径
-  console.log("calling generateClosedLoop");
   const loopData = meshGraph.generateClosedLoop(surfaceVertices);
-  console.log("loopData:", loopData);
   
   if (!loopData) {
     setStatus("无法生成闭合路径，请重试");
@@ -556,7 +565,19 @@ function finishLassoDrawing() {
   const line = store.currentLine();
   if (line) {
     line.isClosed = true;
-    // 设置路径数据（闭合线通常没有用户控制点）
+    
+    // 添加控制点（用于微调）
+    for (const cp of controlPointsData) {
+      line.controlPoints.push({
+        position: cp.position,
+        vertexIndex: cp.vertexIndex,
+        faceIndex: cp.faceIndex,
+        barycentric: cp.barycentric,
+        vertexIndices: cp.vertexIndices,
+      });
+    }
+    
+    // 设置路径数据
     store.setPathData(line.id, {
       pathVertices: loopData.pathVertices,
       pathPositions: loopData.pathPositions,
@@ -811,6 +832,20 @@ function recomputePathFromControlPoints() {
     currentVertex = targetVertex;
   }
 
+  // 对于闭合线，使用 generateClosedLoop
+  if (line.isClosed && controlVertices.length >= 3) {
+    const loopData = meshGraph.generateClosedLoop(controlVertices);
+    if (loopData) {
+      store.setPathData(line.id, {
+        pathVertices: loopData.pathVertices,
+        pathPositions: loopData.pathPositions,
+      });
+      rebuildPreview();
+      return;
+    }
+  }
+
+  // 非闭合线的处理
   // 对每段使用平滑路径
   for (let i = 0; i < controlVertices.length - 1; i++) {
     const startV = controlVertices[i];
