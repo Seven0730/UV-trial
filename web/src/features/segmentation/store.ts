@@ -129,12 +129,14 @@ export class SegmentationStore {
     return true;
   }
 
-  startLine() {
+  startLine(saveToHistory: boolean = true) {
     const id = `line-${this.nextId++}`;
     this.state.currentLineId = id;
     const line: SegmentLine = { id, controlPoints: [] };
     this.state.lines.push(line);
-    this.saveHistory();
+    if (saveToHistory) {
+      this.saveHistory();
+    }
     return id;
   }
 
@@ -160,7 +162,7 @@ export class SegmentationStore {
   addControlPoint(sp: SurfacePoint | THREE.Vector3): void {
     const line = this.currentLine();
     if (!line) {
-      this.startLine();
+      this.startLine(false);  // 不保存历史，让 addControlPoint 最后一起保存
       return this.addControlPoint(sp);
     }
     if (!line.segments) {
@@ -182,7 +184,7 @@ export class SegmentationStore {
           };
     line.controlPoints.push(point);
     segment.points.push(point);
-    this.saveHistory();
+    // 不在这里保存历史，由调用方在设置 pathData 后手动保存
   }
 
   updateControlPoint(index: number, point: SurfacePoint, saveToHistory: boolean = true) {

@@ -236,7 +236,7 @@ export class MeshGraphBuilder {
 
   /**
    * 获取平滑路径
-   * 结合 A* + 简化 + Catmull-Rom 插值
+   * 结合 A* + 简化 + Catmull-Rom 插值 + 等距重采样
    */
   getSmoothPath(start: number, end: number, samplesPerSegment = 4): THREE.Vector3[] {
     // 1. A* 搜索
@@ -253,7 +253,72 @@ export class MeshGraphBuilder {
 
     // 3. Catmull-Rom 样条插值
     const controlPoints = simplified.map(i => this.positions[i]);
-    return this.catmullRomInterpolate(controlPoints, samplesPerSegment);
+    const smoothed = this.catmullRomInterpolate(controlPoints, samplesPerSegment);
+    
+    // 4. 等距重采样，使点分布均匀
+    return this.resampleByArcLength(smoothed);
+  }
+
+  /**
+   * 等距重采样 - 使路径点均匀分布
+   */
+  private resampleByArcLength(points: THREE.Vector3[]): THREE.Vector3[] {
+    if (points.length < 2) return points.map(p => p.clone());
+
+    // 计算总弧长
+    let totalLength = 0;
+    const segmentLengths: number[] = [];
+    for (let i = 1; i < points.length; i++) {
+      const len = points[i].distanceTo(points[i - 1]);
+      segmentLengths.push(len);
+      totalLength += len;
+    }
+
+    if (totalLength < 1e-6) return [points[0].clone()];
+
+    // 目标采样间距：使用平均边长的2倍作为目标间距
+    const targetSpacing = this.avgEdgeLength * 2;
+    const numSamples = Math.max(2, Math.ceil(totalLength / targetSpacing) + 1);
+    const sampleSpacing = totalLength / (numSamples - 1);
+
+    const result: THREE.Vector3[] = [points[0].clone()];
+    
+    let accumulatedLength = 0;
+    let targetLength = sampleSpacing;
+    let segmentIndex = 0;
+    let segmentStart = 0;
+
+    while (result.length < numSamples && segmentIndex < segmentLengths.length) {
+      const segmentEnd = segmentStart + segmentLengths[segmentIndex];
+
+      while (targetLength <= segmentEnd && result.length < numSamples) {
+        // 在当前段内插值
+        const t = (targetLength - segmentStart) / segmentLengths[segmentIndex];
+        const interpolated = new THREE.Vector3().lerpVectors(
+          points[segmentIndex],
+          points[segmentIndex + 1],
+          t
+        );
+        result.push(interpolated);
+        targetLength += sampleSpacing;
+      }
+
+      segmentStart = segmentEnd;
+      segmentIndex++;
+    }
+
+    // 确保最后一个点是终点
+    if (result.length > 0) {
+      const lastPoint = result[result.length - 1];
+      const endPoint = points[points.length - 1];
+      if (lastPoint.distanceTo(endPoint) > sampleSpacing * 0.1) {
+        result.push(endPoint.clone());
+      } else {
+        result[result.length - 1] = endPoint.clone();
+      }
+    }
+
+    return result;
   }
 
   /**

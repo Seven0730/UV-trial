@@ -196,7 +196,7 @@ modeSelect?.addEventListener("change", () => {
 });
 
 startLineBtn.addEventListener("click", () => {
-  store.startLine();
+  store.startLine(false);  // 不保存历史，等添加第一个点时再保存
   rebuildPreview(); // 重新渲染所有线条（旧线保持可见）
   setStatus("新建线");
   updateLineInfo();
@@ -400,6 +400,8 @@ canvas.addEventListener("pointerdown", async (event) => {
   });
   // After adding a control point, recompute the entire path to ensure consistency
   recomputePathFromControlPoints();
+  // 路径计算完成后保存历史，确保 pathPositions 也被保存
+  store.saveHistorySnapshot();
 
   const currentCount = store.getCurrentPoints().length;
   setStatus(`当前线点数: ${currentCount} | face #${hit.faceIndex} bary=(${hit.barycentric
@@ -620,6 +622,9 @@ function rebuildPreview() {
       // 没有路径数据，显示控制点
       linePreview.update(store.getCurrentPoints());
     }
+  } else {
+    // 没有当前线，清除路径点显示
+    linePreview.update([]);
   }
 }
 
