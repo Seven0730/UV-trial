@@ -211,7 +211,7 @@ finishLineBtn.addEventListener("click", () => {
 
 undoPointBtn.addEventListener("click", () => {
   if (store.undo()) {
-    recomputePathFromControlPoints();
+    rebuildPreview(); // 撤销后只刷新显示，不重新计算路径
     setStatus("撤销");
     updateLineInfo();
     updateUndoRedoButtons();
@@ -222,7 +222,7 @@ undoPointBtn.addEventListener("click", () => {
 
 redoPointBtn.addEventListener("click", () => {
   if (store.redo()) {
-    recomputePathFromControlPoints();
+    rebuildPreview(); // 重做后只刷新显示，不重新计算路径
     setStatus("重做");
     updateLineInfo();
     updateUndoRedoButtons();
@@ -237,7 +237,7 @@ window.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key === "z" && !event.shiftKey) {
     event.preventDefault();
     if (store.undo()) {
-      recomputePathFromControlPoints();
+      rebuildPreview(); // 撤销后只刷新显示
       setStatus("撤销");
       updateLineInfo();
       updateUndoRedoButtons();
@@ -248,7 +248,7 @@ window.addEventListener("keydown", (event) => {
       ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === "z")) {
     event.preventDefault();
     if (store.redo()) {
-      recomputePathFromControlPoints();
+      rebuildPreview(); // 重做后只刷新显示
       setStatus("重做");
       updateLineInfo();
       updateUndoRedoButtons();
@@ -603,9 +603,23 @@ function rebuildPreview() {
   // 设置当前选中的线（用于高亮）
   linePreview.setCurrentLine(currentId || null);
   
-  // 如果当前线有控制点但没有pathPositions，显示实时预览
-  if (currentLine && (!currentLine.pathPositions || currentLine.pathPositions.length === 0)) {
-    linePreview.update(store.getCurrentPoints());
+  // 显示当前线的路径点
+  if (currentLine) {
+    if (currentLine.pathPositions && currentLine.pathPositions.length >= 3) {
+      // 已有路径数据，转换为 Vector3 数组并显示点
+      const pts: THREE.Vector3[] = [];
+      for (let i = 0; i < currentLine.pathPositions.length; i += 3) {
+        pts.push(new THREE.Vector3(
+          currentLine.pathPositions[i],
+          currentLine.pathPositions[i + 1],
+          currentLine.pathPositions[i + 2]
+        ));
+      }
+      linePreview.update(pts);
+    } else {
+      // 没有路径数据，显示控制点
+      linePreview.update(store.getCurrentPoints());
+    }
   }
 }
 

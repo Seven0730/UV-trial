@@ -59,7 +59,8 @@ export class LinePreview {
     // 清除当前线的点显示
     this.clearVisuals();
 
-    if (this.showPoints && this.currentLineId) {
+    // 显示路径点（不依赖 currentLineId）
+    if (this.showPoints && points.length > 0) {
       const scale = this.sizeRef() * this.pointSizeFactor;
       for (const p of points) {
         const m = new THREE.Mesh(this.sphereGeo, this.sphereMat);
@@ -81,12 +82,16 @@ export class LinePreview {
   renderAllLines(lines: SegmentLine[], currentLineId?: string) {
     this.currentLineId = currentLineId || null;
     
-    // 收集需要保留的线ID
-    const activeLineIds = new Set(lines.map(l => l.id));
+    // 收集需要保留且有足够数据渲染的线ID
+    const renderableLineIds = new Set(
+      lines
+        .filter(l => l.pathPositions && l.pathPositions.length >= 6)
+        .map(l => l.id)
+    );
     
-    // 删除不再存在的线
+    // 删除不再需要渲染的线（包括已删除的线和没有足够数据的线）
     for (const [lineId, data] of this.renderedLines) {
-      if (!activeLineIds.has(lineId)) {
+      if (!renderableLineIds.has(lineId)) {
         this.linesGroup.remove(data.mesh);
         data.mesh.geometry.dispose();
         this.renderedLines.delete(lineId);
